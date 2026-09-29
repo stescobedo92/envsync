@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- A tiny native-launchable helper: the tests start it to observe what a real child process receives. -->
+  </PropertyGroup>
+
+</Project>

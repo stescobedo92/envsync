@@ -30,6 +30,9 @@ public sealed class ProviderRegistry
         _factories = byType.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>The registered provider types, sorted, for messages that tell the user what they can write.</summary>
+    public IReadOnlyList<string> RegisteredTypes => _types;
+
     public bool IsRegistered(string type) => _factories.ContainsKey(type);
 
     public Result<ISecretProvider> Create(ProviderDefinition definition)

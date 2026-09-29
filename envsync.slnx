@@ -16,6 +16,7 @@
     <Project Path="tests/EnvSync.Providers.Aws.Tests/EnvSync.Providers.Aws.Tests.csproj" />
     <Project Path="tests/EnvSync.Providers.Azure.Tests/EnvSync.Providers.Azure.Tests.csproj" />
     <Project Path="tests/EnvSync.Providers.Vault.Tests/EnvSync.Providers.Vault.Tests.csproj" />
+    <Project Path="tests/EnvSync.TestChild/EnvSync.TestChild.csproj" />
     <Project Path="tests/EnvSync.TestSupport/EnvSync.TestSupport.csproj" />
   </Folder>
 </Solution>
