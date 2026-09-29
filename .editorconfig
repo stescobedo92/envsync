@@ -32,3 +32,10 @@ dotnet_naming_style.underscore_camel.capitalization = camel_case
 
 # ConfigureAwait(false) adds nothing in a console tool: there is no SynchronizationContext to capture.
 dotnet_diagnostic.CA2007.severity = none
+
+# These assemblies are application code consumed only from C#, not a cross-language library, so
+# identifiers that collide with Visual Basic keywords (Error, ...) are harmless.
+dotnet_diagnostic.CA1716.severity = none
+
+# `Result<T>.Success(...)` / `.Failure(...)` is the deliberate factory shape of the result type.
+dotnet_diagnostic.CA1000.severity = none
