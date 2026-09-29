@@ -1,32 +1,32 @@
 {
-  // Este archivo SÍ se puede versionar: solo contiene referencias, nunca secretos.
+  // This file CAN be committed: it only holds references, never secrets.
   "defaultProfile": "dev",
   "profiles": {
     "dev": {
       "providers": {
-        "kv":    { "type": "azure-keyvault",  "uri": "https://mi-vault.vault.azure.net" },
+        "kv":    { "type": "azure-keyvault",  "uri": "https://my-vault.vault.azure.net" },
         "aws":   { "type": "aws-secrets",     "region": "us-east-1" },
-        "vault": { "type": "hashicorp-vault", "address": "https://vault.ejemplo.com:8200", "mount": "secret", "kv": 2 }
+        "vault": { "type": "hashicorp-vault", "address": "https://vault.example.com:8200", "mount": "secret", "kv": 2 }
       },
       "variables": {
-        // Azure Key Vault: el nombre del secreto solo admite letras, dígitos y '-'.
+        // Azure Key Vault: the secret name accepts only letters, digits and '-'.
         "DB_PASSWORD": { "from": "kv", "ref": "db-password" },
 
-        // AWS Secrets Manager: 'nombre#campo' extrae una propiedad de un secreto JSON.
+        // AWS Secrets Manager: 'name#field' extracts one property of a JSON secret.
         "API_KEY": { "from": "aws", "ref": "prod/api#key" },
 
-        // HashiCorp Vault (KV): la ruta es relativa al 'mount'; el '#campo' es obligatorio.
-        // Tu token solo se envía a la dirección de tu propio VAULT_ADDR (o de ENVSYNC_TRUSTED_HOSTS): la 'address' de arriba
-        // debe coincidir con la tuya, o quitarse para usar VAULT_ADDR.
+        // HashiCorp Vault (KV): the path is relative to the 'mount'; the '#field' is mandatory.
+        // Your token is only ever sent to the address in your own VAULT_ADDR (or in ENVSYNC_TRUSTED_HOSTS): the 'address' above
+        // must match yours, or be removed so that VAULT_ADDR is used.
         "JWT_SECRET": { "from": "vault", "ref": "app#jwt" },
 
-        // Opcional: si no existe se omite con una advertencia, pero un fallo de credenciales sigue siendo un error.
+        // Optional: if it does not exist it is skipped with a warning, but a credentials failure is still an error.
         "LOG_LEVEL": { "from": "kv", "ref": "log-level", "required": false }
       }
     },
     "staging": {
       "providers": {
-        "kv": { "type": "azure-keyvault", "uri": "https://mi-vault-staging.vault.azure.net" }
+        "kv": { "type": "azure-keyvault", "uri": "https://my-vault-staging.vault.azure.net" }
       },
       "variables": {
         "DB_PASSWORD": { "from": "kv", "ref": "db-password" }

@@ -1,23 +1,23 @@
 # envsync
 
-Herramienta de línea de comandos multiplataforma (Windows, Linux y macOS) que conecta con **Azure Key Vault**,
-**AWS Secrets Manager** y **HashiCorp Vault** y entrega los secretos a tu programa **sin archivos `.env` en texto plano**.
-Además avisa antes de ejecutar si falta alguna llave requerida.
+A cross-platform (Windows, Linux and macOS) command-line tool that connects to **Azure Key Vault**, **AWS Secrets Manager** and
+**HashiCorp Vault** and hands the secrets to your program **without plain-text `.env` files**.
+It also warns you, before anything runs, if a required key is missing.
 
 ```text
-envsync run -- dotnet run                      # los secretos solo existen en el entorno del proceso hijo
-envsync env --shell pwsh | Invoke-Expression   # o variables de sesión en tu shell actual
-envsync check                                  # ¿está todo lo que necesito? (útil en CI)
+envsync run -- dotnet run                      # secrets exist only in the child process's environment
+envsync env --shell pwsh | Invoke-Expression   # or as session variables in your current shell
+envsync check                                  # is everything I need there? (handy in CI)
 ```
 
-## Por qué
+## Why
 
-Un `.env` copiado de máquina en máquina acaba en un chat, en un backup o en un commit. Con envsync el repositorio solo lleva un
-manifiesto (`envsync.json`) con **referencias**, y los valores viajan del gestor de secretos a la memoria de tu proceso.
+A `.env` copied from machine to machine ends up in a chat, in a backup or in a commit. With envsync the repository carries only a
+manifest (`envsync.json`) with **references**, and the values travel from the secret manager to your process's memory.
 
-## Instalación
+## Installation
 
-Requiere el SDK o el runtime de **.NET 10**.
+Requires the **.NET 10** SDK or runtime.
 
 ```bash
 dotnet pack src/EnvSync.Cli -c Release -o artifacts
@@ -25,10 +25,10 @@ dotnet tool install --global --add-source ./artifacts EnvSync.Tool
 envsync --version
 ```
 
-## Manifiesto
+## Manifest
 
-`envsync.json` se busca hacia arriba desde el directorio actual (como git busca `.git`) o se indica con `--manifest`.
-Admite comentarios y comas finales. Hay un ejemplo completo en [`examples/envsync.json`](examples/envsync.json).
+`envsync.json` is searched for upwards from the current directory (the way git looks for `.git`) or given with `--manifest`.
+It accepts comments and trailing commas. A complete example lives in [`examples/envsync.json`](examples/envsync.json).
 
 ```jsonc
 {
@@ -36,8 +36,8 @@ Admite comentarios y comas finales. Hay un ejemplo completo en [`examples/envsyn
   "profiles": {
     "dev": {
       "providers": {
-        "kv":    { "type": "azure-keyvault",  "uri": "https://mi-vault.vault.azure.net" },
-        "vault": { "type": "hashicorp-vault", "address": "https://vault.ejemplo.com:8200" }
+        "kv":    { "type": "azure-keyvault",  "uri": "https://my-vault.vault.azure.net" },
+        "vault": { "type": "hashicorp-vault", "address": "https://vault.example.com:8200" }
       },
       "variables": {
         "DB_PASSWORD": { "from": "kv",    "ref": "db-password" },
@@ -49,98 +49,98 @@ Admite comentarios y comas finales. Hay un ejemplo completo en [`examples/envsyn
 }
 ```
 
-**Referencias (`ref`)**: `nombre` o `nombre#campo`. Con `#campo` se extrae una propiedad de un secreto JSON.
+**References (`ref`)**: `name` or `name#field`. With `#field`, one property of a JSON secret is extracted.
 
-| Proveedor (`type`) | Ajustes | Notas |
+| Provider (`type`) | Settings | Notes |
 |---|---|---|
-| `azure-keyvault` | `uri` (https) | El nombre del secreto solo admite letras, dígitos y `-`. `DB_PASSWORD` no existe en Key Vault: el `ref` es el nombre **en la bóveda**. Solo se aceptan hosts de Key Vault (`*.vault.azure.net` y equivalentes de nubes soberanas). |
-| `aws-secrets` | `region` (o `AWS_REGION`), `profile` (opcional) | Acepta nombre o ARN. Los secretos binarios no se admiten. Perfiles SSO y de rol soportados. |
-| `hashicorp-vault` | `address` (o `VAULT_ADDR`), `namespace`, `mount` (por defecto `secret`), `kv` (`1` o `2`, por defecto `2`) | La ruta es **relativa al `mount`**. Sin `#campo` da error, porque un secreto de Vault tiene varios campos. Ver "A dónde va tu token". |
+| `azure-keyvault` | `uri` (https) | The secret name accepts only letters, digits and `-`. `DB_PASSWORD` does not exist in Key Vault: the `ref` is the name **in the vault**. Only Key Vault hosts are accepted (`*.vault.azure.net` and the sovereign-cloud equivalents). |
+| `aws-secrets` | `region` (or `AWS_REGION`), `profile` (optional) | Accepts a name or an ARN. Binary secrets are not supported. SSO and role profiles are supported. |
+| `hashicorp-vault` | `address` (or `VAULT_ADDR`), `namespace`, `mount` (default `secret`), `kv` (`1` or `2`, default `2`) | The path is **relative to the `mount`**. Without `#field` it is an error, because a Vault secret has several fields. See "Where your token goes". |
 
-Los ajustes desconocidos o en blanco son un error, no se ignoran ni caen a un valor por defecto. Todos los errores del manifiesto se
-reportan de una vez, cada uno con su ruta JSON.
+Unknown or blank settings are an error: they are neither ignored nor replaced by a default. Every manifest error is reported at once,
+each with its JSON path.
 
-**Un secreto vacío no es un valor.** Si un secreto existe pero está vacío, cuenta como que falta: una variable requerida falla (código 11).
+**An empty secret is not a value.** If a secret exists but is empty, it counts as missing: a required variable fails (exit code 11).
 
-**Variables opcionales** (`"required": false`): solo se omiten si el secreto **no existe** o está vacío, con una advertencia que
-dice por qué. Una credencial rechazada, un timeout, un JSON con forma inesperada o una configuración inválida **siguen siendo error**:
-nunca se arranca a medias. Una opcional omitida se **quita** del entorno del hijo, para que no sobreviva un valor heredado de otra sesión.
+**Optional variables** (`"required": false`): they are skipped only if the secret **does not exist** or is empty, with a warning that
+says why. A rejected credential, a timeout, a JSON of an unexpected shape or an invalid configuration **are still errors**:
+it never starts half-configured. A skipped optional variable is **removed** from the child's environment, so a value inherited from
+another session cannot survive.
 
-**Nombres reservados.** Un gestor de secretos no puede fijar variables que cargan código o reconfiguran un shell: `PATH`, `PATHEXT`,
-`COMSPEC`, `PSModulePath`, `IFS`, `ENV`, `BASH_ENV`, `PROMPT_COMMAND`, `PS0`-`PS4`, `NODE_OPTIONS`, `PYTHONPATH`, `JAVA_TOOL_OPTIONS`,
-`DOTNET_STARTUP_HOOKS`, `GIT_SSH_COMMAND`, cualquiera que empiece por `LD_` o `DYLD_`, entre otras. Sin distinguir mayúsculas.
-Dos nombres que solo difieren en mayúsculas cuentan como duplicados en todos los sistemas, porque Windows los fusionaría.
+**Reserved names.** A secret manager cannot set variables that load code or reconfigure a shell: `PATH`, `PATHEXT`, `COMSPEC`,
+`PSModulePath`, `IFS`, `ENV`, `BASH_ENV`, `PROMPT_COMMAND`, `PS0`-`PS4`, `NODE_OPTIONS`, `PYTHONPATH`, `JAVA_TOOL_OPTIONS`,
+`DOTNET_STARTUP_HOOKS`, `GIT_SSH_COMMAND`, anything starting with `LD_` or `DYLD_`, among others. Case-insensitive.
+Two names that differ only in case count as duplicates on every operating system, because Windows would merge them.
 
-## A dónde va tu token
+## Where your token goes
 
-Un manifiesto es contenido del repositorio: cualquiera con permiso de escritura, o un PR, podría poner en él la dirección de un
-servidor propio y recibir el token que tú tienes para *tu* Vault. Por eso **el manifiesto no decide a dónde van tus credenciales**:
+A manifest is repository content: anyone with write access, or a PR, could put the address of their own server in it and receive the
+token you hold for *your* Vault. That is why **the manifest does not decide where your credentials go**:
 
-- **Vault**: la `address` del manifiesto solo se acepta si es *loopback* (un servidor de desarrollo local), tiene el mismo origen que
-  tu propio `VAULT_ADDR`, o su host está en `ENVSYNC_TRUSTED_HOSTS`. Con solo un `VAULT_TOKEN`, un manifiesto que apunte a otro
-  sitio falla con un mensaje que explica cómo confirmarlo. Sin `address` en el manifiesto se usa tu `VAULT_ADDR`.
-- **Azure**: solo se ofrece la credencial a hosts de Key Vault o Managed HSM.
-- **`ENVSYNC_TRUSTED_HOSTS`**: hosts exactos o `*.dominio`, separados por comas, punto y coma o espacios. Es una variable de **tu**
-  entorno, que el repositorio no puede tocar. `*.corp.example.com` cubre subdominios, no `corp.example.com` ni `evilcorp.example.com`.
+- **Vault**: the manifest's `address` is accepted only if it is *loopback* (a local development server), has the same origin as your
+  own `VAULT_ADDR`, or its host is in `ENVSYNC_TRUSTED_HOSTS`. With only a `VAULT_TOKEN`, a manifest that points elsewhere fails with
+  a message explaining how to confirm it. Without an `address` in the manifest, your `VAULT_ADDR` is used.
+- **Azure**: the credential is only offered to Key Vault or Managed HSM hosts.
+- **`ENVSYNC_TRUSTED_HOSTS`**: exact hosts or `*.domain`, separated by commas, semicolons or spaces. It is a variable of **your**
+  environment, which the repository cannot touch. `*.corp.example.com` covers subdomains, not `corp.example.com` nor `evilcorp.example.com`.
 
-## Comandos
+## Commands
 
-Opciones comunes: `--manifest`, `--profile` (o `ENVSYNC_PROFILE`), `--timeout <s>` (15, máx. 86400), `--concurrency <n>` (8, máx. 256), `--verbose`.
-Un valor **vacío** en `--manifest`, `--profile` o `ENVSYNC_PROFILE` es un error de uso, no un "no indicado": un `STAGE` sin definir en CI
-no debe caer en silencio al perfil por defecto. Un perfil elegido por defecto se anuncia en stderr.
+Common options: `--manifest`, `--profile` (or `ENVSYNC_PROFILE`), `--timeout <s>` (15, max 86400), `--concurrency <n>` (8, max 256), `--verbose`.
+An **empty** value for `--manifest`, `--profile` or `ENVSYNC_PROFILE` is a usage error, not "not given": an undefined `STAGE` in CI
+must not silently fall back to the default profile. A profile chosen by default is announced on stderr.
 
-### `envsync run -- programa args...`
+### `envsync run -- program args...`
 
-Lanza el programa con los secretos en **su** entorno y en ningún otro sitio. Hereda stdin/stdout/stderr, así que conserva el
-terminal. Su código de salida pasa intacto. Si falta una llave requerida **no se lanza** y se explica qué falta.
+Launches the program with the secrets in **its** environment and nowhere else. It inherits stdin/stdout/stderr, so it keeps the
+terminal. Its exit code passes through untouched. If a required key is missing it is **not launched** and what is missing is explained.
 
-**El `--` es obligatorio.** Sin él, `-v`, `-p` y `-m` que el programa lleve después se leerían como opciones de envsync y se quitarían
-de sus argumentos sin avisar: `envsync run -- npm --version`.
+**The `--` is mandatory.** Without it, any `-v`, `-p` or `-m` that the program carries after its name would be read as envsync options
+and silently removed from its arguments: `envsync run -- npm --version`.
 
-En Windows, los `.cmd` y `.bat` (`npm.cmd`, `az.cmd`, `mvn.cmd`...) se encuentran gracias a `PATHEXT`, pero cmd.exe **reinterpreta** sus
-argumentos con reglas propias: `&` inicia otro comando y `%VAR%` se expande (con los secretos recién inyectados). Un argumento con
-`" % & | < > ^ ! ( )` o un salto de línea se **rechaza** para esos destinos; los `.exe` no tienen esa restricción.
+On Windows, `.cmd` and `.bat` files (`npm.cmd`, `az.cmd`, `mvn.cmd`...) are found thanks to `PATHEXT`, but cmd.exe **reinterprets** their
+arguments with its own rules: `&` starts another command and `%VAR%` is expanded (with the secrets just injected). An argument containing
+`" % & | < > ^ ! ( )` or a line break is **rejected** for those targets; `.exe` files have no such restriction.
 
-`run` hereda tu entorno completo, incluidas las credenciales de los proveedores (`VAULT_TOKEN`, `AZURE_CLIENT_SECRET`,
-`AWS_SECRET_ACCESS_KEY`), porque muchos programas necesitan las mismas credenciales de AWS o Azure. Quítalas tú si el hijo no debe verlas.
+`run` inherits your whole environment, including the providers' credentials (`VAULT_TOKEN`, `AZURE_CLIENT_SECRET`,
+`AWS_SECRET_ACCESS_KEY`), because many programs need the same AWS or Azure credentials. Remove them yourself if the child must not see them.
 
 ### `envsync env --shell <pwsh|powershell|bash|zsh|cmd>`
 
-Imprime un script que fija las variables en la sesión actual. Por defecto: PowerShell en Windows, bash en el resto.
+Prints a script that sets the variables in the current session. Default: PowerShell on Windows, bash everywhere else.
 
 ```powershell
-envsync env --shell pwsh | Invoke-Expression        # PowerShell 7 y Windows PowerShell 5.1
+envsync env --shell pwsh | Invoke-Expression        # PowerShell 7 and Windows PowerShell 5.1
 ```
 ```bash
-eval "$(envsync env --shell bash)"                  # bash y zsh
+eval "$(envsync env --shell bash)"                  # bash and zsh
 ```
 ```bat
-for /f "usebackq delims=" %L in (`envsync env --shell cmd`) do %L      :: cmd; en un .cmd escribe %%L
+for /f "usebackq delims=" %L in (`envsync env --shell cmd`) do %L      :: cmd; in a .cmd file write %%L
 ```
 
-`envsync` debe estar en el `PATH`: cmd solo quita un par de comillas exteriores, así que el comando de dentro no puede llevar ninguna.
-Es el idioma que **no toca el disco**: `for /f` ejecuta cada línea que imprime envsync, y los secretos pasan de su stdout a la propia consola.
+`envsync` must be on the `PATH`: cmd strips only one pair of outer quotes, so the command inside cannot carry any.
+This is the idiom that **never touches the disk**: `for /f` executes each line envsync prints, and the secrets go from its stdout to the console itself.
 
-- **Falla en voz alta.** `eval` de una salida vacía tiene éxito, así que si no se puede construir el entorno (llave que falta,
-  manifiesto inválido, incluso un error de tecleo en las opciones), lo único que se imprime en stdout es **una sentencia que hace
-  fallar a quien la evalúa** con el mismo código de salida: `(exit 11)` en bash y zsh, `throw '...'` en PowerShell, `cmd /c exit 11` en cmd.
-  Nunca un script parcial ni un secreto. Con `set -e` el script se detiene; sin él, comprueba `$?`.
-  Un shell no soportado no recibe nada, porque no se conoce su sintaxis.
-- **Se niega a imprimir en un terminal** (los secretos quedarían en el historial de la pantalla); hay que canalizarlo, o pasar
-  `--unsafe-print`. Esa negativa se decide antes de pedir ningún secreto. stdout lleva **solo** el script; todo lo demás va a stderr.
-- **PowerShell recibe ASCII puro**: PowerShell decodifica la salida de un comando nativo con la página de códigos de la consola, no con
-  UTF-8, y un carácter fuera de ASCII podría cambiar de valor o incluso cortar la cadena. Todo lo que no es ASCII imprimible se
-  escribe como `[char]N`.
-- **`cmd` es el más restrictivo**: solo ASCII imprimible sin `% " ! ^`, y sentencias de menos de 8000 caracteres (cmd corta la línea en
-  8191). Un valor que no encaje se rechaza (código 14) en vez de escaparse "a ojo"; `run` no pasa por un shell y sí puede llevarlo.
-- En PowerShell y `cmd`, asignar un valor **vacío** elimina la variable en Windows (por eso un secreto vacío ya es un error).
-- Una opcional omitida **no** se quita de tu shell (`env` no puede): el aviso lo dice.
+- **It fails loudly.** `eval` of empty output succeeds, so if the environment cannot be built (a missing key, an invalid manifest,
+  even a typo in the options), the only thing printed on stdout is **a statement that makes whoever evaluates it fail** with the same
+  exit code: `(exit 11)` in bash and zsh, `throw '...'` in PowerShell, `cmd /c exit 11` in cmd.
+  Never a partial script and never a secret. With `set -e` the script stops; without it, check `$?`.
+  An unsupported shell receives nothing, because its syntax is unknown.
+- **It refuses to print to a terminal** (the secrets would stay in the screen history); pipe it, or pass
+  `--unsafe-print`. That refusal is decided before any secret is requested. stdout carries **only** the script; everything else goes to stderr.
+- **PowerShell receives pure ASCII**: PowerShell decodes a native command's output with the console code page, not UTF-8, and a
+  non-ASCII character could change value or even cut the string short. Everything that is not printable ASCII is written as `[char]N`.
+- **`cmd` is the most restrictive**: printable ASCII only, without `% " ! ^`, and statements shorter than 8000 characters (cmd cuts the
+  line at 8191). A value that does not fit is rejected (exit code 14) instead of being escaped "by eye"; `run` does not go through a shell and can carry it.
+- In PowerShell and `cmd`, assigning an **empty** value deletes the variable on Windows (which is why an empty secret is already an error).
+- A skipped optional variable is **not** removed from your shell (`env` cannot do that): the warning says so.
 
 ### `envsync check [--offline] [--format text|json]`
 
-Comprueba que están todas las llaves y **nunca imprime valores**. Con `--offline` solo valida el manifiesto y los ajustes de los
-proveedores, sin peticiones a los gestores de secretos: el código 0 significa entonces "configuración válida", **no** "las llaves existen"
-(el JSON lo dice con `"verified": false`). Ante un fallo, además del informe en stdout escribe un resumen en stderr.
+Checks that every key is there and **never prints values**. With `--offline` it only validates the manifest and the providers' settings,
+with no requests to the secret managers: exit code 0 then means "valid configuration", **not** "the keys exist"
+(the JSON says so with `"verified": false`). On failure, besides the report on stdout it writes a summary on stderr.
 
 ```text
 Profile 'dev'
@@ -151,98 +151,98 @@ LOG_LEVEL    kv        SKIPPED  optional, left unset: Secret 'log-level' was not
 3 variable(s): 1 ready, 1 missing, 0 failed, 1 skipped.
 ```
 
-## Autenticación
+## Authentication
 
-envsync **no guarda credenciales**; usa las de cada gestor:
+envsync **stores no credentials**; it uses each manager's own:
 
-- **Azure**: `DefaultAzureCredential` (variables `AZURE_*`, identidad administrada, Azure CLI, Visual Studio...). Prueba con `az login`.
-- **AWS**: cadena por defecto del SDK (entorno, `~/.aws`, SSO, roles) o un `profile` con nombre, incluidos los de SSO y de rol.
-- **Vault**: `VAULT_TOKEN` o el archivo `~/.vault-token` que escribe `vault login`.
+- **Azure**: `DefaultAzureCredential` (`AZURE_*` variables, managed identity, Azure CLI, Visual Studio...). Try `az login`.
+- **AWS**: the SDK's default chain (environment, `~/.aws`, SSO, roles) or a named `profile`, including SSO and role profiles.
+- **Vault**: `VAULT_TOKEN` or the `~/.vault-token` file that `vault login` writes.
 
-## Códigos de salida
+## Exit codes
 
-| Código | Significado |
+| Code | Meaning |
 |---|---|
-| 0 | Todo correcto (en `run`, el código del programa hijo) |
-| 10 | Manifiesto o configuración inválidos |
-| 11 | Faltan llaves requeridas (no existen o están vacías) |
-| 12 | Fallo de autenticación, de red o de un proveedor |
-| 13 | Error interno, incluida una excepción inesperada de un proveedor (no es una caída de red: no sirve reintentar) |
-| 14 | Un secreto existe, pero el shell pedido no puede llevar su valor de forma segura |
-| 64 | Uso incorrecto de la línea de comandos |
-| 126 / 127 | El programa de `run` no se pudo iniciar / no se encontró |
-| 130 | Cancelado por el usuario |
+| 0 | Everything is fine (in `run`, the child program's code) |
+| 10 | Invalid manifest or configuration |
+| 11 | Required keys are missing (they do not exist or are empty) |
+| 12 | Authentication, network or provider failure |
+| 13 | Internal error, including an unexpected exception from a provider (not a network outage: retrying is pointless) |
+| 14 | A secret exists, but the requested shell cannot carry its value safely |
+| 64 | Incorrect command-line usage |
+| 126 / 127 | The program of `run` could not be started / was not found |
+| 130 | Cancelled by the user |
 
-Los códigos propios de envsync están en 10-14 para no chocar con los que ya usan la mayoría de programas (0, 1, 2).
+envsync's own codes are 10-14 so they do not collide with those already used by most programs (0, 1, 2).
 
-## Modelo de seguridad y límites
+## Security model and limits
 
-Lo que **sí** se garantiza (con tests):
+What **is** guaranteed (with tests):
 
-- Los secretos no se escriben a disco. `SecretValue` se muestra siempre como `[REDACTED]`, así que un log o una excepción no lo filtran.
-- Lo que viene de un manifiesto o de un proveedor se **sanea** antes de mostrarse: caracteres de control, saltos de línea, secuencias de
-  escape y anulaciones bidireccionales se sustituyen, para que no puedan borrar ni falsificar líneas en un terminal o en un log de CI.
-- Los mensajes de error de los proveedores se conservan completos (en una línea y acotados), porque suelen traer justo lo que hay que
-  corregir; pueden nombrar recursos (IDs de cuenta, roles), **nunca valores secretos**.
-- El token de Vault nunca se sigue en una redirección, no viaja por `http://` (salvo `localhost`) y el manifiesto no elige a dónde va.
-- Las respuestas de Vault se limitan a 1 MiB y el manifiesto a 1 MiB.
-- Los emisores de shell se verifican contra bash, PowerShell 7, Windows PowerShell 5.1 y cmd **reales**: 33 valores hostiles en bash
-  y PowerShell y 11 en cmd (el subconjunto que admite), comprobando en cada uno que el valor vuelve idéntico y que no se ejecuta nada;
-  PowerShell además **a través de una tubería nativa real**, con la codificación de consola por defecto.
+- Secrets are never written to disk. `SecretValue` always displays as `[REDACTED]`, so a log or an exception cannot leak it.
+- Anything that comes from a manifest or a provider is **sanitized** before it is shown: control characters, line breaks, escape
+  sequences and bidirectional overrides are replaced, so they cannot erase or forge lines in a terminal or a CI log.
+- Providers' error messages are kept whole (on one line and bounded), because they usually carry exactly what needs fixing;
+  they may name resources (account IDs, roles), **never secret values**.
+- The Vault token is never followed across a redirect, never travels over `http://` (except `localhost`), and the manifest does not choose where it goes.
+- Vault responses are limited to 1 MiB, and so is the manifest.
+- The shell emitters are verified against **real** bash, PowerShell 7, Windows PowerShell 5.1 and cmd: 33 hostile values in bash
+  and PowerShell and 11 in cmd (the subset it accepts), checking in each that the value comes back identical and that nothing is executed;
+  PowerShell also **through a real native pipe**, with the default console encoding.
 
-Lo que **no** puede hacer, y conviene saber:
+What it **cannot** do, and is worth knowing:
 
-- Las variables de entorno son visibles para otros procesos **del mismo usuario** (`/proc/<pid>/environ`, depuradores). Es inherente al
-  mecanismo; lo que se evita es el archivo en disco, no la exposición al propio usuario.
-- Un `string` de .NET no se puede borrar de la memoria. Se limpian los búferes propios (script, transcodificación), pero los valores
-  siguen en la memoria de envsync mientras corre `run`: envsync espera al hijo y conserva las referencias.
-- **Señales.** Ctrl+C llega también al hijo (mismo grupo de procesos) y envsync espera hasta 10 s a que termine solo antes de pararlo.
-  **SIGTERM y SIGHUP no se reenvían al hijo**: al recibirlos, envsync espera esos 10 s y luego lo mata. En un contenedor
-  (`docker stop`) el hijo no tiene ocasión de apagarse con gracia. No se ha verificado el comportamiento con señales reales, solo la
-  lógica de cancelación con tests.
-- El manifiesto se busca hacia arriba hasta la raíz, como git: no ejecutes envsync en un directorio compartido donde otro usuario pueda
-  haber dejado un `envsync.json`.
-- `--offline` no hace peticiones a los gestores de secretos, pero el SDK de AWS puede leer tus archivos de credenciales locales al
-  construirse; no se ha comprobado con una captura de red que no salga nada más.
-- Git Bash (Cygwin) descarta un `\r` crudo al leer un script, incluso entre comillas; el emisor de bash lo escribe como `$'\r'`.
+- Environment variables are visible to other processes **of the same user** (`/proc/<pid>/environ`, debuggers). This is inherent to the
+  mechanism; what is avoided is the file on disk, not exposure to the user themselves.
+- A .NET `string` cannot be erased from memory. The tool's own buffers (script, transcoding) are cleared, but the values
+  stay in envsync's memory while `run` executes: envsync waits for the child and keeps the references.
+- **Signals.** Ctrl+C also reaches the child (same process group) and envsync waits up to 10 s for it to finish on its own before stopping it.
+  **SIGTERM and SIGHUP are not forwarded to the child**: on receiving them, envsync waits those 10 s and then kills it. In a container
+  (`docker stop`) the child gets no chance to shut down gracefully. Behavior with real signals has not been verified, only the
+  cancellation logic with tests.
+- The manifest is searched for upwards to the root, like git: do not run envsync in a shared directory where another user may
+  have left an `envsync.json`.
+- `--offline` makes no requests to the secret managers, but the AWS SDK may read your local credential files when it is
+  constructed; it has not been checked with a network capture that nothing else leaves the machine.
+- Git Bash (Cygwin) drops a raw `\r` when reading a script, even between quotes; the bash emitter writes it as `$'\r'`.
 
-## Arquitectura
+## Architecture
 
 ```text
-Domain          records y tipos de valor puros (SecretValue, SecretReference, Profile, Result<T>)
-Application     CQRS: consultas y comandos como `readonly record struct`, handlers ValueTask, puertos
-Infrastructure  parser del manifiesto, emisores de shell, lanzador de procesos
-Providers.*     Azure, AWS y Vault, cada uno en su proyecto (los SDK pesados quedan aislados)
-Cli             System.CommandLine y la raíz de composición (DI "a mano", sin contenedor ni reflexión)
+Domain          pure records and value types (SecretValue, SecretReference, Profile, Result<T>)
+Application     CQRS: queries and commands as `readonly record struct`, ValueTask handlers, ports
+Infrastructure  manifest parser, shell emitters, process launcher
+Providers.*     Azure, AWS and Vault, each in its own project (the heavy SDKs stay isolated)
+Cli             System.CommandLine and the composition root (hand-written DI, no container and no reflection)
 ```
 
-- **CQRS sin mediador**: `ResolveEnvironmentQuery`, `CheckRequirementsQuery`, `ExportEnvironmentQuery` y `RunProcessCommand` son
-  `readonly record struct`; los handlers implementan `IQueryHandler` / `ICommandHandler`. Se pasan por valor porque un método `async`
-  no admite parámetros `in`.
-- **"Cero asignaciones" con alcance honesto**: se cumple, y se **verifica** con `GC.GetAllocatedBytesForCurrentThread`, en el
-  análisis de referencias, la validación de nombres, los tres emisores de shell y el búfer con pool. No se cumple, ni puede, en las
-  llamadas de red de los SDK ni al materializar el valor final del secreto como `string`.
-- **Resolución concurrente y acotada**: un proveedor por alias, tope de peticiones simultáneas, timeout por secreto y un arreglo
-  preasignado donde cada tarea escribe su posición (sin locks, orden estable). Una factoría o un `Dispose` que lance no rompe la ejecución.
-- **Native AOT, verificado en Windows**: los analizadores de trimming/AOT están activos en todo `src/` con warnings como errores, el
-  código propio no usa reflexión ni escaneo de ensamblados, y `dotnet publish src/EnvSync.Cli -r win-x64 -p:PublishAot=true` produce
-  un único binario nativo de 16,5 MB **sin ningún aviso** y sin necesitar el runtime de .NET. Las pruebas de extremo a extremo pasan
-  contra ese binario (`ENVSYNC_E2E_BINARY=<ruta>`). Necesita las herramientas C++ del SO (Visual Studio en Windows, `clang` en Linux);
-  en Windows hay que tener `vswhere` en el `PATH`. **Linux y macOS no se han probado aquí**: lo hace el trabajo `aot` del CI.
+- **CQRS without a mediator**: `ResolveEnvironmentQuery`, `CheckRequirementsQuery`, `ExportEnvironmentQuery` and `RunProcessCommand` are
+  `readonly record struct`; the handlers implement `IQueryHandler` / `ICommandHandler`. They are passed by value because an `async` method
+  cannot take `in` parameters.
+- **"Zero allocation" with an honest scope**: it holds, and it is **verified** with `GC.GetAllocatedBytesForCurrentThread`, in
+  reference parsing, name validation, the three shell emitters and the pooled buffer. It does not hold, and cannot, in the SDKs'
+  network calls nor when the final secret value is materialized as a `string`.
+- **Bounded concurrent resolution**: one provider per alias, a cap on simultaneous requests, a per-secret timeout and a
+  preallocated array where each task writes its own slot (no locks, stable order). A factory or a `Dispose` that throws does not break the run.
+- **Native AOT, verified on Windows**: the trimming/AOT analyzers are active across `src/` with warnings as errors, the tool's own
+  code uses no reflection and no assembly scanning, and `dotnet publish src/EnvSync.Cli -r win-x64 -p:PublishAot=true` produces
+  a single 16.5 MB native binary **with no warnings at all** and without needing the .NET runtime. The end-to-end tests pass
+  against that binary (`ENVSYNC_E2E_BINARY=<path>`). It needs the operating system's C++ tools (Visual Studio on Windows, `clang` on Linux);
+  on Windows `vswhere` must be on the `PATH`. **Linux and macOS have not been tried here**: the CI's `aot` job does that.
 
-## Desarrollo
+## Development
 
 ```bash
 dotnet build envsync.slnx
 dotnet test --solution envsync.slnx
 ```
 
-> **No pases `--nologo` a `dotnet test`.** En el SDK 10 se reenvía al host de xUnit v3, que lo rechaza, y el resultado engañoso es
-> "Zero tests ran" con código 5.
+> **Do not pass `--nologo` to `dotnet test`.** On SDK 10 it is forwarded to the xUnit v3 host, which rejects it, and the misleading result is
+> "Zero tests ran" with exit code 5.
 
-- Tests con xUnit v3 sobre Microsoft.Testing.Platform, dobles escritos a mano (sin librerías de mocking) y desarrollo guiado por tests.
-- Las pruebas contra shells reales se **omiten**, no se simulan, si el shell no está instalado en la máquina.
-- `tests/EnvSync.Cli.Tests/EndToEndTests.cs` ejecuta el binario real contra un Vault simulado en loopback y un proceso hijo real, e incluye
-  el idioma `for /f` de cmd contra un `cmd.exe` real.
-- Estos tests solo se han ejecutado en Windows. La matriz de `.github/workflows/ci.yml` está pensada para ejecutarlos en Linux y macOS,
-  y su trabajo `aot` publica el binario nativo en cada SO y le pasa los tests de extremo a extremo.
+- Tests use xUnit v3 on Microsoft.Testing.Platform, hand-written test doubles (no mocking libraries) and test-driven development.
+- Tests against real shells are **skipped**, not simulated, if the shell is not installed on the machine.
+- `tests/EnvSync.Cli.Tests/EndToEndTests.cs` runs the real binary against a fake Vault on loopback and a real child process, and includes
+  cmd's `for /f` idiom against a real `cmd.exe`.
+- These tests have only been run on Windows. The matrix in `.github/workflows/ci.yml` is meant to run them on Linux and macOS,
+  and its `aot` job publishes the native binary on each OS and runs the end-to-end tests against it.
