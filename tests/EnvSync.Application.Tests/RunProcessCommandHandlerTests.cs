@@ -109,6 +109,43 @@ public sealed class RunProcessCommandHandlerTests
     }
 
     [Fact]
+    public async Task Run_TellsTheCallerWhatWasResolvedBeforeTheChildStarts()
+    {
+        using var kv = new FakeSecretProvider().Returns("a", "1");
+        var launcher = new FakeProcessLauncher();
+        var profile = Create([Provider("kv")], [Variable("A", "kv", "a"), Variable("OPT", "kv", "nope", required: false)]);
+        ResolutionResult? seen = null;
+        var launchesWhenTold = -1;
+        var command = new RunProcessCommand(profile, Sane, "app", Args, Resolved: resolution =>
+        {
+            seen = resolution;
+            launchesWhenTold = launcher.Calls;
+        });
+
+        await HandlerFor(kv, launcher).HandleAsync(command, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(seen);
+        Assert.Contains(seen.Outcomes, o => o.Status == VariableStatus.Skipped);
+        Assert.Equal(0, launchesWhenTold);
+        Assert.Equal(1, launcher.Calls);
+    }
+
+    [Fact]
+    public async Task Run_DoesNotTellTheCallerWhenPreflightFails()
+    {
+        using var kv = new FakeSecretProvider();
+        var launcher = new FakeProcessLauncher();
+        var profile = Create([Provider("kv")], [Variable("A", "kv", "missing")]);
+        var told = false;
+        var command = new RunProcessCommand(profile, Sane, "app", Args, Resolved: _ => told = true);
+
+        var result = await HandlerFor(kv, launcher).HandleAsync(command, TestContext.Current.CancellationToken);
+
+        Assert.False(told);
+        Assert.False(result.Launched);
+    }
+
+    [Fact]
     public async Task Run_ChildExitCodes_PassThroughUntouched()
     {
         using var kv = new FakeSecretProvider().Returns("a", "1");

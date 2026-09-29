@@ -23,6 +23,10 @@
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="EnvSync.Cli.Tests" />
+  </ItemGroup>
+
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" Condition="Exists('..\..\README.md')" />

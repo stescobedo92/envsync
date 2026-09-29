@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\EnvSync.Cli\EnvSync.Cli.csproj" />
     <ProjectReference Include="..\EnvSync.TestSupport\EnvSync.TestSupport.csproj" />
+    <ProjectReference Include="..\EnvSync.TestChild\EnvSync.TestChild.csproj" />
   </ItemGroup>
 
 </Project>

@@ -46,10 +46,11 @@ public sealed class ExitCodesTests
     [Fact]
     public void KnownCodes_DoNotCollideWithTheUsualProcessCodes()
     {
-        int[] ours = [ExitCodes.ManifestInvalid, ExitCodes.MissingRequired, ExitCodes.ProviderFailure, ExitCodes.InternalError];
+        int[] ours = [ExitCodes.ManifestInvalid, ExitCodes.MissingRequired, ExitCodes.ProviderFailure, ExitCodes.InternalError, ExitCodes.UsageError];
 
         Assert.DoesNotContain(1, ours);
         Assert.DoesNotContain(2, ours);
-        Assert.Equal(4, ours.Distinct().Count());
+        Assert.Equal(5, ours.Distinct().Count());
+        Assert.Equal(64, ExitCodes.UsageError);
     }
 }

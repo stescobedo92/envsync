@@ -35,6 +35,8 @@ public sealed class RunProcessCommandHandler : ICommandHandler<RunProcessCommand
             return new RunProcessResult(resolution, Launched: false, ExitCodes.For(resolution), LaunchError: null);
         }
 
+        command.Resolved?.Invoke(resolution);
+
         var launch = await _launcher.RunAsync(
             new ProcessLaunchRequest(command.Executable, command.Arguments, ToAssignments(resolution)),
             cancellationToken);

@@ -16,6 +16,9 @@ public static class ExitCodes
     public const int ProviderFailure = 12;
     public const int InternalError = 13;
 
+    /// <summary>The command line itself is wrong: bad option, missing argument, unsafe request (sysexits.h EX_USAGE).</summary>
+    public const int UsageError = 64;
+
     /// <summary>The command was found but could not be started (shell convention).</summary>
     public const int LaunchFailed = 126;
 
