@@ -2,6 +2,7 @@ using System.Net;
 using Amazon.Runtime;
 using Amazon.SecretsManager.Model;
 using EnvSync.Application.Abstractions;
+using EnvSync.Application.Diagnostics;
 using EnvSync.Application.Secrets;
 using EnvSync.Domain;
 
@@ -12,7 +13,7 @@ public sealed class AwsSecretsProvider : ISecretProvider, IDisposable
 {
     private const int MaxNameLength = 512;
     private const int MaxArnLength = 2048;
-    private const int MaxDetailLength = 300;
+    private const int MaxDetailLength = 600;
 
     private static readonly HashSet<string> AuthenticationCodes = new(StringComparer.Ordinal)
     {
@@ -84,13 +85,13 @@ public sealed class AwsSecretsProvider : ISecretProvider, IDisposable
             return Fail(
                 reference,
                 ErrorKind.AuthenticationFailed,
-                $"AWS rejected the request ({code}, HTTP {status}): {FirstLine(exception.Message)} Check the credentials and the secretsmanager:GetSecretValue permission.");
+                $"AWS rejected the request ({code}, HTTP {status}): {ErrorText.Summarize(exception.Message, MaxDetailLength)} Check the credentials and the secretsmanager:GetSecretValue permission.");
         }
 
         return Fail(
             reference,
             ErrorKind.ProviderUnavailable,
-            $"AWS Secrets Manager request failed ({code}, HTTP {status}): {FirstLine(exception.Message)}");
+            $"AWS Secrets Manager request failed ({code}, HTTP {status}): {ErrorText.Summarize(exception.Message, MaxDetailLength)}");
     }
 
     private static Result<SecretValue> TranslateClient(AmazonClientException exception, SecretReference reference) =>
@@ -98,11 +99,11 @@ public sealed class AwsSecretsProvider : ISecretProvider, IDisposable
             ? Fail(
                 reference,
                 ErrorKind.AuthenticationFailed,
-                $"No AWS credentials were found: {FirstLine(exception.Message)} Run 'aws configure' or 'aws sso login', or set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.")
+                $"No AWS credentials were found: {ErrorText.Summarize(exception.Message, MaxDetailLength)} Run 'aws configure' or 'aws sso login', or set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.")
             : Fail(
                 reference,
                 ErrorKind.ProviderUnavailable,
-                $"Could not complete the request to AWS Secrets Manager: {FirstLine(exception.Message)}");
+                $"Could not complete the request to AWS Secrets Manager: {ErrorText.Summarize(exception.Message, MaxDetailLength)}");
 
     private static bool IsValidSecretId(string id)
     {
@@ -121,13 +122,6 @@ public sealed class AwsSecretsProvider : ISecretProvider, IDisposable
         }
 
         return true;
-    }
-
-    private static string FirstLine(string message)
-    {
-        var end = message.AsSpan().IndexOfAny('\r', '\n');
-        var line = (end < 0 ? message : message[..end]).Trim();
-        return line.Length <= MaxDetailLength ? line : line[..MaxDetailLength] + "...";
     }
 
     private static Result<SecretValue> Fail(SecretReference reference, ErrorKind kind, string detail) =>

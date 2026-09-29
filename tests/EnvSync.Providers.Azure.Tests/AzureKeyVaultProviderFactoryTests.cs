@@ -50,6 +50,57 @@ public sealed class AzureKeyVaultProviderFactoryTests
         Assert.Equal("v", secret.Value.Reveal());
     }
 
+    // The Azure credential is offered to whatever host the manifest names, and a manifest is repository content. Only genuine
+    // Key Vault / Managed HSM hosts are accepted, unless the user declared a host trusted outside the repository.
+    [Theory]
+    [InlineData("https://my-kv.vault.azure.net")]
+    [InlineData("https://my-kv.vault.azure.cn")]
+    [InlineData("https://my-kv.vault.usgovcloudapi.net")]
+    [InlineData("https://my-hsm.managedhsm.azure.net")]
+    [InlineData("https://MY-KV.VAULT.AZURE.NET")]
+    public void Create_GenuineKeyVaultHosts_AreAccepted(string uri)
+    {
+        var (factory, uris) = Recording();
+
+        Assert.True(factory.Create(Definition(("uri", uri))).IsSuccess);
+        Assert.Single(uris);
+    }
+
+    [Theory]
+    [InlineData("https://evil.example.com")]
+    [InlineData("https://my-kv.vault.azure.net.evil.com")]
+    [InlineData("https://evilvault.azure.net")]
+    [InlineData("https://vault.azure.net")]
+    [InlineData("https://localhost")]
+    public void Create_AHostThatIsNotAKeyVault_IsRefusedSoTheAzureCredentialIsNeverOfferedToIt(string uri)
+    {
+        var (factory, uris) = Recording();
+
+        var result = factory.Create(Definition(("uri", uri)));
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal(ErrorKind.ProviderMisconfigured, error.Kind);
+        Assert.Contains("Key Vault", error.Detail, StringComparison.Ordinal);
+        Assert.Contains("ENVSYNC_TRUSTED_HOSTS", error.Detail, StringComparison.Ordinal);
+        Assert.Empty(uris);
+    }
+
+    [Fact]
+    public void Create_AHostTheUserDeclaredTrustedOutsideTheRepository_IsAccepted()
+    {
+        var uris = new List<Uri>();
+        var factory = new AzureKeyVaultProviderFactory(
+            uri =>
+            {
+                uris.Add(uri);
+                return FakeSecretClient.Returning("v");
+            },
+            name => name == "ENVSYNC_TRUSTED_HOSTS" ? "kv.internal.example.com" : null);
+
+        Assert.True(factory.Create(Definition(("uri", "https://kv.internal.example.com"))).IsSuccess);
+        Assert.Single(uris);
+    }
+
     [Fact]
     public void Create_SettingNamesIgnoreCase()
     {

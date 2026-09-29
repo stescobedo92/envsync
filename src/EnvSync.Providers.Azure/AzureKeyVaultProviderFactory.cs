@@ -1,6 +1,7 @@
 using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
 using EnvSync.Application.Abstractions;
+using EnvSync.Application.Providers;
 using EnvSync.Domain;
 
 namespace EnvSync.Providers.Azure;
@@ -10,15 +11,32 @@ namespace EnvSync.Providers.Azure;
 /// authenticated with <see cref="DefaultAzureCredential"/>: environment, workload identity, managed identity, Azure CLI,
 /// Visual Studio and so on. envsync stores no Azure credential of its own. Building the client makes no request; the token is
 /// only acquired on the first read.
+/// <para>
+/// The manifest is repository content, and the credential is offered to whatever host it names. Only genuine Key Vault and Managed
+/// HSM hosts are therefore accepted, unless the user declared a host trusted through <c>ENVSYNC_TRUSTED_HOSTS</c>, which the
+/// repository cannot influence.
+/// </para>
 /// </summary>
 public sealed class AzureKeyVaultProviderFactory : ISecretProviderFactory
 {
     public const string TypeName = "azure-keyvault";
 
-    private readonly Func<Uri, SecretClient> _clientFactory;
+    private static readonly string[] KeyVaultSuffixes =
+    [
+        ".vault.azure.net", ".vault.azure.cn", ".vault.usgovcloudapi.net", ".vault.microsoftazure.de",
+        ".managedhsm.azure.net", ".managedhsm.azure.cn", ".managedhsm.usgovcloudapi.net",
+    ];
 
-    public AzureKeyVaultProviderFactory(Func<Uri, SecretClient>? clientFactory = null) =>
+    private readonly Func<Uri, SecretClient> _clientFactory;
+    private readonly Func<string, string?> _getEnvironmentVariable;
+
+    public AzureKeyVaultProviderFactory(
+        Func<Uri, SecretClient>? clientFactory = null,
+        Func<string, string?>? getEnvironmentVariable = null)
+    {
         _clientFactory = clientFactory ?? CreateClient;
+        _getEnvironmentVariable = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
+    }
 
     public string Type => TypeName;
 
@@ -49,7 +67,28 @@ public sealed class AzureKeyVaultProviderFactory : ISecretProviderFactory
             return Misconfigured(definition, "The Key Vault address must use https.");
         }
 
+        if (!IsKeyVaultHost(uri.Host) && !TrustedHosts.FromEnvironment(_getEnvironmentVariable).IsTrusted(uri.Host))
+        {
+            return Misconfigured(
+                definition,
+                $"'{uri.Host}' is not an Azure Key Vault address (expected something like my-vault.vault.azure.net). Your Azure credential is only " +
+                $"offered to Key Vault hosts; if this one is legitimate, list its host in {TrustedHosts.VariableName}.");
+        }
+
         return Result<ISecretProvider>.Success(new AzureKeyVaultSecretProvider(_clientFactory(uri)));
+    }
+
+    private static bool IsKeyVaultHost(string host)
+    {
+        foreach (var suffix in KeyVaultSuffixes)
+        {
+            if (host.Length > suffix.Length && host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static SecretClient CreateClient(Uri uri) => new(uri, new DefaultAzureCredential());

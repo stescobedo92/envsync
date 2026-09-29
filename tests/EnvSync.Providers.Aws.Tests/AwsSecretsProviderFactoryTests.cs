@@ -170,6 +170,94 @@ public sealed class AwsSecretsProviderFactoryTests
         Assert.Null(Assert.Single(built).Credentials);
     }
 
+    [Theory]
+    [InlineData("region")]
+    [InlineData("profile")]
+    public void Create_ASettingThatIsPresentButBlank_IsAnErrorNotASilentFallbackToAmbientValues(string key)
+    {
+        // A blank "profile" would quietly use whichever credentials the machine happens to have: possibly another AWS account.
+        var (factory, built) = Recording(new Environment().With("AWS_REGION", "us-east-1"), _ => new AnonymousAWSCredentials());
+        var settings = key == "region"
+            ? Definition(("region", "  "))
+            : Definition(("region", "us-east-1"), ("profile", "  "));
+
+        var error = Assert.Single(factory.Create(settings).Errors);
+
+        Assert.Equal(ErrorKind.ProviderMisconfigured, error.Kind);
+        Assert.Contains($"'{key}'", error.Detail, StringComparison.Ordinal);
+        Assert.Contains("empty", error.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(built);
+    }
+
+    [Fact]
+    public void Create_AProfileResolverThatThrows_IsReportedInsteadOfEscaping()
+    {
+        var (factory, built) = Recording(profiles: _ => throw new InvalidOperationException("the SSO assemblies are missing"));
+
+        var result = factory.Create(Definition(("region", "us-east-1"), ("profile", "work")));
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal(ErrorKind.ProviderMisconfigured, error.Kind);
+        Assert.Contains("work", error.Detail, StringComparison.Ordinal);
+        Assert.Contains("SSO assemblies are missing", error.Detail, StringComparison.Ordinal);
+        Assert.Empty(built);
+    }
+
+    [Fact]
+    public void Create_AGatewayFactoryThatThrows_IsReportedInsteadOfEscaping()
+    {
+        var factory = new AwsSecretsProviderFactory(
+            _ => null,
+            _ => null,
+            (_, _) => throw new AmazonClientException("Unable to find credentials"));
+
+        var error = Assert.Single(factory.Create(Definition(("region", "us-east-1"))).Errors);
+
+        Assert.Equal(ErrorKind.AuthenticationFailed, error.Kind);
+        Assert.Contains("credentials", error.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // The SDK loads the SSO and STS assemblies lazily, only when a profile needs them. If the packages are not referenced the
+    // failure appears at runtime, on the first SSO or assume-role profile, and never in a build or a fake-backed test.
+    [Fact]
+    public void SsoAndAssumeRoleProfiles_CanBeLoadedBecauseTheirSdkPackagesAreReferenced()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "envsync-aws-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var file = Path.Combine(directory, "credentials");
+            File.WriteAllText(file, """
+                [base]
+                aws_access_key_id = AKIAIOSFODNN7EXAMPLE
+                aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+                [assumed]
+                role_arn = arn:aws:iam::123456789012:role/Reader
+                source_profile = base
+                region = us-east-1
+
+                [sso]
+                sso_start_url = https://example.awsapps.com/start
+                sso_region = us-east-1
+                sso_account_id = 123456789012
+                sso_role_name = ReadOnly
+                region = us-east-1
+                """);
+
+            var chain = new Amazon.Runtime.CredentialManagement.CredentialProfileStoreChain(file);
+
+            Assert.True(chain.TryGetAWSCredentials("assumed", out var assumed));
+            Assert.NotNull(assumed);
+            Assert.True(chain.TryGetAWSCredentials("sso", out var sso));
+            Assert.NotNull(sso);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void Create_UnknownSetting_IsMisconfiguredSoTyposAreCaught()
     {

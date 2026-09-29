@@ -3,6 +3,7 @@ using Amazon.Runtime;
 using Amazon.Runtime.CredentialManagement;
 using Amazon.SecretsManager;
 using EnvSync.Application.Abstractions;
+using EnvSync.Application.Diagnostics;
 using EnvSync.Domain;
 
 namespace EnvSync.Providers.Aws;
@@ -47,6 +48,16 @@ public sealed class AwsSecretsProviderFactory : ISecretProviderFactory
             }
         }
 
+        // Present but blank is a mistake, not "use the ambient value": a blank profile would quietly pick up whichever credentials
+        // the machine happens to have, possibly for another AWS account.
+        foreach (var key in KnownSettings)
+        {
+            if (definition.Settings.TryGetValue(key, out var raw) && string.IsNullOrWhiteSpace(raw))
+            {
+                return Misconfigured(definition, $"The '{key}' setting is present but empty: remove it or give it a value.");
+            }
+        }
+
         var region = Setting(definition, "region") ?? _getEnvironmentVariable("AWS_REGION") ?? _getEnvironmentVariable("AWS_DEFAULT_REGION");
         if (string.IsNullOrWhiteSpace(region))
         {
@@ -62,14 +73,33 @@ public sealed class AwsSecretsProviderFactory : ISecretProviderFactory
         AWSCredentials? credentials = null;
         if (Setting(definition, "profile") is { } profile)
         {
-            credentials = _resolveProfile(profile);
+            try
+            {
+                credentials = _resolveProfile(profile);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // Loading an SSO or assume-role profile pulls in extra SDK assemblies; a failure there must be a message, not a crash.
+                return Misconfigured(definition, $"The AWS profile '{profile}' could not be loaded: {ErrorText.Summarize(exception.Message, 400)}");
+            }
+
             if (credentials is null)
             {
                 return Misconfigured(definition, $"The AWS profile '{profile}' was not found in the shared credentials or config files.");
             }
         }
 
-        return Result<ISecretProvider>.Success(new AwsSecretsProvider(_createGateway(credentials, region)));
+        try
+        {
+            return Result<ISecretProvider>.Success(new AwsSecretsProvider(_createGateway(credentials, region)));
+        }
+        catch (AmazonClientException exception)
+        {
+            return Result<ISecretProvider>.Failure(new Error(
+                ErrorKind.AuthenticationFailed,
+                definition.Alias,
+                $"The AWS client could not be created: {ErrorText.Summarize(exception.Message, 400)} Run 'aws configure' or 'aws sso login', or set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."));
+        }
     }
 
     /// <summary>Lowercase letters, digits and hyphens, shaped like <c>us-east-1</c>, <c>us-gov-west-1</c> or <c>cn-north-1</c>.</summary>

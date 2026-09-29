@@ -137,13 +137,100 @@ public sealed class VaultSecretProviderTests
     [Theory]
     [InlineData("nothing")]
     [InlineData("nested")]
-    public async Task Get_NonScalarField_IsFieldNotFound(string field)
+    public async Task Get_NonScalarField_IsAnUnsupportedSecretNotAMissingOne(string field)
     {
         var result = await Get(ProviderFor(StubHttpMessageHandler.Json(HttpStatusCode.OK, Kv2Body)), "app", field);
 
         var error = Assert.Single(result.Errors);
-        Assert.Equal(ErrorKind.FieldNotFound, error.Kind);
+        Assert.Equal(ErrorKind.UnsupportedSecretType, error.Kind);
         Assert.Contains("scalar", error.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Vault answers 404 both for a secret that does not exist (empty "errors") and for a route that does not exist, such as a wrong
+    // mount or kv version ("no handler for route ..."). The second is a configuration mistake, not a missing key.
+    [Fact]
+    public async Task Get_A404ThatNamesAnUnknownRoute_IsMisconfigurationNotAMissingSecret()
+    {
+        const string body = """{"errors":["no handler for route 'secret/data/app'. route entry not found."]}""";
+
+        var result = await Get(ProviderFor(StubHttpMessageHandler.Json(HttpStatusCode.NotFound, body)), "app", "password");
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal(ErrorKind.ProviderMisconfigured, error.Kind);
+        Assert.Contains("no handler for route", error.Detail, StringComparison.Ordinal);
+        Assert.Contains("mount", error.Detail, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not json at all")]
+    [InlineData("""{"errors":[]}""")]
+    public async Task Get_A404WithoutAnExplanation_IsAMissingSecret(string body)
+    {
+        var result = await Get(ProviderFor(StubHttpMessageHandler.Json(HttpStatusCode.NotFound, body)), "app", "password");
+
+        Assert.Equal(ErrorKind.SecretNotFound, Assert.Single(result.Errors).Kind);
+    }
+
+    [Fact]
+    public async Task Get_ATransportFailure_ShowsTheInnerExceptionSoATlsProblemCanBeDiagnosed()
+    {
+        var failure = new HttpRequestException(
+            "The SSL connection could not be established, see inner exception.",
+            new System.Security.Authentication.AuthenticationException("The remote certificate is invalid according to the validation procedure."));
+
+        var result = await Get(ProviderFor(StubHttpMessageHandler.Throwing(failure)), "app", "password");
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal(ErrorKind.ProviderUnavailable, error.Kind);
+        Assert.Contains("remote certificate is invalid", error.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Get_ABodyLargerThanASecretCouldBe_IsProviderUnavailableInsteadOfBeingBuffered()
+    {
+        var huge = new StubHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(new string('a', 2 * 1024 * 1024)),
+        }));
+
+        var result = await Get(ProviderFor(huge), "app", "password");
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal(ErrorKind.ProviderUnavailable, error.Kind);
+        Assert.Contains("could not be read", error.Detail, StringComparison.Ordinal);
+    }
+
+    private sealed class FailingContent : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context) =>
+            throw new IOException("connection reset while reading the body");
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = -1;
+            return false;
+        }
+    }
+
+    [Fact]
+    public async Task Get_ABodyThatFailsMidRead_IsProviderUnavailableNotAnExceptionThatEscapesTheProvider()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new FailingContent() }));
+
+        var result = await Get(ProviderFor(handler), "app", "password");
+
+        Assert.Equal(ErrorKind.ProviderUnavailable, Assert.Single(result.Errors).Kind);
+    }
+
+    [Fact]
+    public async Task Get_A403WhoseBodyCannotBeRead_IsStillAuthenticationFailed()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new FailingContent() }));
+
+        var result = await Get(ProviderFor(handler), "app", "password");
+
+        Assert.Equal(ErrorKind.AuthenticationFailed, Assert.Single(result.Errors).Kind);
     }
 
     [Fact]

@@ -6,6 +6,9 @@
 
   <ItemGroup>
     <PackageReference Include="AWSSDK.SecretsManager" />
+    <PackageReference Include="AWSSDK.SSO" />
+    <PackageReference Include="AWSSDK.SSOOIDC" />
+    <PackageReference Include="AWSSDK.SecurityToken" />
   </ItemGroup>
 
 </Project>

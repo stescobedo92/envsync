@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using EnvSync.Application.Abstractions;
+using EnvSync.Application.Diagnostics;
 using EnvSync.Domain;
 
 namespace EnvSync.Providers.Vault;
@@ -10,11 +11,15 @@ namespace EnvSync.Providers.Vault;
 /// <summary>
 /// Reads one field of a KV v1/v2 secret over Vault's HTTP API. It speaks HTTP directly (a single GET) instead of pulling
 /// in a client library, which keeps it free of reflection and Native AOT-safe. Redirects are never followed: the token is a
-/// custom header that the framework would forward to whatever host the redirect names.
+/// custom header that the framework would forward to whatever host the redirect names. Response bodies are read with a hard
+/// size limit, and no failure while reading one can escape as an exception.
 /// </summary>
 public sealed class VaultSecretProvider : ISecretProvider, IDisposable
 {
-    private const int MaxReasonLength = 200;
+    /// <summary>No KV secret is anywhere near this size; a bigger reply is a misbehaving or hostile endpoint.</summary>
+    private const long MaxBodyBytes = 1024 * 1024;
+
+    private const int MaxDetailLength = 300;
 
     private readonly HttpClient _http;
     private readonly VaultOptions _options;
@@ -53,7 +58,13 @@ public sealed class VaultSecretProvider : ISecretProvider, IDisposable
         }
         catch (HttpRequestException exception)
         {
-            return Fail(reference, ErrorKind.ProviderUnavailable, $"Could not reach Vault at {_options.Address.Host}: {exception.Message}");
+            // The framework's own message often ends "see inner exception", and the inner one (bad certificate, wrong host name,
+            // unsupported protocol) is the part that says what to fix.
+            var inner = exception.InnerException is { } cause ? $" ({ErrorText.Summarize(cause.Message, MaxDetailLength)})" : string.Empty;
+            return Fail(
+                reference,
+                ErrorKind.ProviderUnavailable,
+                $"Could not reach Vault at {_options.Address.Host}: {ErrorText.Summarize(exception.Message, MaxDetailLength)}{inner}");
         }
 
         using (response)
@@ -97,7 +108,12 @@ public sealed class VaultSecretProvider : ISecretProvider, IDisposable
 
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
-            return Fail(reference, ErrorKind.SecretNotFound, $"Secret '{reference.Path}' was not found under mount '{_options.Mount}'.");
+            // An empty "errors" list means no such secret. A non-empty one ("no handler for route ...") means the route itself is
+            // wrong, which is a mount or kv-version mistake and must not be mistaken for a missing key.
+            var routeProblem = await ReadReasonAsync(response, cancellationToken);
+            return routeProblem.Length > 0
+                ? Fail(reference, ErrorKind.ProviderMisconfigured, $"Vault says: {routeProblem}. Check the 'mount' and 'kv' settings.")
+                : Fail(reference, ErrorKind.SecretNotFound, $"Secret '{reference.Path}' was not found under mount '{_options.Mount}'.");
         }
 
         if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized)
@@ -106,7 +122,7 @@ public sealed class VaultSecretProvider : ISecretProvider, IDisposable
             return Fail(
                 reference,
                 ErrorKind.AuthenticationFailed,
-                $"Vault denied the request (HTTP {status}){reason}: the token is invalid, expired, or has no access to '{reference.Path}'.");
+                $"Vault denied the request (HTTP {status}){(reason.Length > 0 ? " - " + reason : string.Empty)}: the token is invalid, expired, or has no access to '{reference.Path}'.");
         }
 
         if (status is >= 300 and < 400)
@@ -117,16 +133,18 @@ public sealed class VaultSecretProvider : ISecretProvider, IDisposable
             return Fail(
                 reference,
                 ErrorKind.ProviderUnavailable,
-                $"Vault redirected the request to '{target}' (HTTP {status}). Redirects are not followed so the token is never sent to another host; set 'address' to that node.");
+                $"Vault redirected the request to '{ErrorText.Summarize(target, MaxDetailLength)}' (HTTP {status}). Redirects are not followed so the token is never sent to another host; set 'address' to that node.");
         }
 
-        return Fail(reference, ErrorKind.ProviderUnavailable, $"Vault answered HTTP {status}{await ReadReasonAsync(response, cancellationToken)}.");
+        var explanation = await ReadReasonAsync(response, cancellationToken);
+        return Fail(reference, ErrorKind.ProviderUnavailable, $"Vault answered HTTP {status}{(explanation.Length > 0 ? " - " + explanation : string.Empty)}.");
     }
 
     private async ValueTask<Result<SecretValue>> ParseAsync(HttpResponseMessage response, SecretReference reference, CancellationToken cancellationToken)
     {
         try
         {
+            await response.Content.LoadIntoBufferAsync(MaxBodyBytes, cancellationToken);
             await using var body = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken);
 
@@ -154,6 +172,13 @@ public sealed class VaultSecretProvider : ISecretProvider, IDisposable
         {
             return Unexpected(reference);
         }
+        catch (Exception exception) when (exception is HttpRequestException or IOException)
+        {
+            return Fail(
+                reference,
+                ErrorKind.ProviderUnavailable,
+                $"The response from Vault could not be read: {ErrorText.Summarize(exception.InnerException?.Message ?? exception.Message, MaxDetailLength)}");
+        }
     }
 
     private static Result<SecretValue> Extract(JsonElement data, SecretReference reference)
@@ -171,7 +196,7 @@ public sealed class VaultSecretProvider : ISecretProvider, IDisposable
             JsonValueKind.Number => Result<SecretValue>.Success(new SecretValue(value.GetRawText())),
             JsonValueKind.True => Result<SecretValue>.Success(new SecretValue("true")),
             JsonValueKind.False => Result<SecretValue>.Success(new SecretValue("false")),
-            _ => Fail(reference, ErrorKind.FieldNotFound, $"The field '{field}' is not a scalar value (string, number or boolean)."),
+            _ => Fail(reference, ErrorKind.UnsupportedSecretType, $"The field '{field}' is not a scalar value (string, number or boolean)."),
         };
     }
 
@@ -188,11 +213,16 @@ public sealed class VaultSecretProvider : ISecretProvider, IDisposable
         return false;
     }
 
-    /// <summary>Vault explains failures as <c>{"errors":["..."]}</c>; keep that (it never holds secret values), trimmed and sanitized.</summary>
+    /// <summary>
+    /// Vault explains failures as <c>{"errors":["..."]}</c>. That never holds secret values, so it is kept, sanitized and bounded.
+    /// Returns an empty string when there is nothing to say, including when the body itself cannot be read: a failure while
+    /// explaining a failure must not change what the failure was.
+    /// </summary>
     private static async ValueTask<string> ReadReasonAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         try
         {
+            await response.Content.LoadIntoBufferAsync(MaxBodyBytes, cancellationToken);
             await using var body = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken);
 
@@ -208,35 +238,12 @@ public sealed class VaultSecretProvider : ISecretProvider, IDisposable
                 .Select(static e => e.GetString()!)
                 .ToArray();
 
-            if (reasons.Length == 0)
-            {
-                return string.Empty;
-            }
-
-            var text = Sanitize(string.Join("; ", reasons));
-            return text.Length == 0 ? string.Empty : $" - {text}";
+            return reasons.Length == 0 ? string.Empty : ErrorText.Summarize(string.Join("; ", reasons), MaxDetailLength);
         }
-        catch (JsonException)
+        catch (Exception exception) when (exception is JsonException or HttpRequestException or IOException)
         {
             return string.Empty;
         }
-    }
-
-    private static string Sanitize(string text)
-    {
-        var builder = new StringBuilder(Math.Min(text.Length, MaxReasonLength));
-
-        foreach (var c in text)
-        {
-            if (builder.Length == MaxReasonLength)
-            {
-                break;
-            }
-
-            builder.Append(char.IsControl(c) ? ' ' : c);
-        }
-
-        return builder.ToString().Trim();
     }
 
     private static Result<SecretValue> Unexpected(SecretReference reference) =>

@@ -184,13 +184,25 @@ public sealed class AwsSecretsProviderTests
     }
 
     [Fact]
-    public async Task Get_OnlyTheFirstLineOfAnSdkMessageIsKept()
+    public async Task Get_AMultiLineSdkMessage_IsKeptWholeOnOneLine()
     {
         var gateway = FakeGateway.Throwing(Service("AccessDeniedException", HttpStatusCode.BadRequest, "denied\r\nsecond line with request details"));
 
         var error = Assert.Single((await Get(gateway, "prod/db")).Errors);
 
-        Assert.DoesNotContain("second line", error.Detail, StringComparison.Ordinal);
+        Assert.Contains("second line with request details", error.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain('\n', error.Detail);
+        Assert.DoesNotContain('\r', error.Detail);
+    }
+
+    [Fact]
+    public async Task Get_AHugeSdkMessage_IsBounded()
+    {
+        var gateway = FakeGateway.Throwing(Service("AccessDeniedException", HttpStatusCode.BadRequest, new string('x', 20_000)));
+
+        var error = Assert.Single((await Get(gateway, "prod/db")).Errors);
+
+        Assert.True(error.Detail.Length < 1000, $"detail was {error.Detail.Length} characters");
     }
 
     [Fact]

@@ -145,16 +145,40 @@ public sealed class AzureKeyVaultSecretProviderTests
         Assert.Contains(status.ToString(System.Globalization.CultureInfo.InvariantCulture), error.Detail, StringComparison.Ordinal);
     }
 
+    // DefaultAzureCredential lists why each credential in its chain was skipped, one per line; cutting the message after the first
+    // line throws away exactly the part that says what to fix.
     [Fact]
-    public async Task Get_NoUsableCredential_IsAuthenticationFailedWithTheLoginHint()
+    public async Task Get_NoUsableCredential_KeepsEveryLineOfTheReasonOnOneLineWithTheLoginHint()
     {
-        var client = FakeSecretClient.Throwing(new CredentialUnavailableException("EnvironmentCredential authentication unavailable.\r\nSecond line that should not be shown."));
+        var client = FakeSecretClient.Throwing(new CredentialUnavailableException(
+            "DefaultAzureCredential failed.\r\n - EnvironmentCredential authentication unavailable.\r\n - AzureCliCredential: Azure CLI not installed."));
 
         var error = Assert.Single((await Get(client, "db-password")).Errors);
 
         Assert.Equal(ErrorKind.AuthenticationFailed, error.Kind);
         Assert.Contains("az login", error.Detail, StringComparison.Ordinal);
-        Assert.DoesNotContain("Second line", error.Detail, StringComparison.Ordinal);
+        Assert.Contains("EnvironmentCredential", error.Detail, StringComparison.Ordinal);
+        Assert.Contains("Azure CLI not installed", error.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain('\n', error.Detail);
+        Assert.DoesNotContain('\r', error.Detail);
+    }
+
+    [Fact]
+    public async Task Get_AHugeCredentialMessage_IsBounded()
+    {
+        var client = FakeSecretClient.Throwing(new AuthenticationFailedException(new string('x', 20_000)));
+
+        var error = Assert.Single((await Get(client, "db-password")).Errors);
+
+        Assert.True(error.Detail.Length < 1000, $"detail was {error.Detail.Length} characters");
+    }
+
+    [Fact]
+    public async Task Get_ACredentialFailureThatWrapsACancellation_IsACancellationNotAnAuthenticationError()
+    {
+        var client = FakeSecretClient.Throwing(new AuthenticationFailedException("token request was cancelled", new OperationCanceledException()));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await Get(client, "db-password"));
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using Azure;
 using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
 using EnvSync.Application.Abstractions;
+using EnvSync.Application.Diagnostics;
 using EnvSync.Application.Secrets;
 using EnvSync.Domain;
 
@@ -14,7 +15,7 @@ namespace EnvSync.Providers.Azure;
 public sealed class AzureKeyVaultSecretProvider : ISecretProvider
 {
     private const int MaxNameLength = 127;
-    private const int MaxDetailLength = 300;
+    private const int MaxDetailLength = 600;
 
     private readonly SecretClient _client;
 
@@ -44,12 +45,18 @@ public sealed class AzureKeyVaultSecretProvider : ISecretProvider
         {
             return Translate(exception, reference);
         }
+        catch (AuthenticationFailedException exception) when (exception.InnerException is OperationCanceledException)
+        {
+            // A token request that was cancelled or timed out is not a credential problem. Surfacing it as a cancellation lets the
+            // caller tell a timeout from the user pressing Ctrl+C, instead of blaming the user's login.
+            throw new OperationCanceledException(exception.Message, exception, cancellationToken);
+        }
         catch (AuthenticationFailedException exception)
         {
             return Fail(
                 reference,
                 ErrorKind.AuthenticationFailed,
-                $"Azure authentication failed: {FirstLine(exception.Message)} Run 'az login', or configure the AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_CLIENT_SECRET environment variables.");
+                $"Azure authentication failed: {ErrorText.Summarize(exception.Message, MaxDetailLength)} Run 'az login', or configure the AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_CLIENT_SECRET environment variables.");
         }
     }
 
@@ -87,13 +94,6 @@ public sealed class AzureKeyVaultSecretProvider : ISecretProvider
         }
 
         return true;
-    }
-
-    private static string FirstLine(string message)
-    {
-        var end = message.AsSpan().IndexOfAny('\r', '\n');
-        var line = (end < 0 ? message : message[..end]).Trim();
-        return line.Length <= MaxDetailLength ? line : line[..MaxDetailLength] + "...";
     }
 
     private static Result<SecretValue> Fail(SecretReference reference, ErrorKind kind, string detail) =>
