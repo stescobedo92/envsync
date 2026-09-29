@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using EnvSync.Application.Abstractions;
 using EnvSync.Domain;
 
@@ -64,6 +65,12 @@ public sealed class PowerShellEmitter : IShellEmitter
         output.Advance(cursor.Length);
         return true;
     }
+
+    /// <summary>A terminating error: it stops an <c>Invoke-Expression</c> pipeline and a script running with errors set to Stop.</summary>
+    public void WriteFailure(IBufferWriter<char> output, int exitCode) =>
+        output.Write(string.Create(
+            CultureInfo.InvariantCulture,
+            $"throw 'envsync: could not set the environment (exit code {exitCode}); see the messages above.'\n"));
 
     private static int ExpandedLength(ReadOnlySpan<char> value)
     {

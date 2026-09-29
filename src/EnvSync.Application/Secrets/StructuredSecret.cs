@@ -11,6 +11,7 @@ namespace EnvSync.Application.Secrets;
 /// </summary>
 public static class StructuredSecret
 {
+    // Not "field not found": the secret exists but is the wrong shape, and an optional variable must not hide that.
     private const string NotAnObject = "The secret is not a valid JSON object, so a #field cannot be selected from it.";
 
     public static Result<SecretValue> Select(string payload, SecretReference reference)
@@ -43,7 +44,7 @@ public static class StructuredSecret
         {
             if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
             {
-                return Fail(reference, ErrorKind.FieldNotFound, NotAnObject);
+                return Fail(reference, ErrorKind.UnsupportedSecretType, NotAnObject);
             }
 
             while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
@@ -63,7 +64,7 @@ public static class StructuredSecret
         }
         catch (JsonException)
         {
-            return Fail(reference, ErrorKind.FieldNotFound, NotAnObject);
+            return Fail(reference, ErrorKind.UnsupportedSecretType, NotAnObject);
         }
     }
 
@@ -74,7 +75,7 @@ public static class StructuredSecret
             JsonTokenType.Number => Result<SecretValue>.Success(new SecretValue(Encoding.UTF8.GetString(reader.ValueSpan))),
             JsonTokenType.True => Result<SecretValue>.Success(new SecretValue("true")),
             JsonTokenType.False => Result<SecretValue>.Success(new SecretValue("false")),
-            _ => Fail(reference, ErrorKind.FieldNotFound, $"The field '{field}' is not a scalar value (string, number or boolean)."),
+            _ => Fail(reference, ErrorKind.UnsupportedSecretType, $"The field '{field}' is not a scalar value (string, number or boolean)."),
         };
 
     private static Result<SecretValue> Fail(SecretReference reference, ErrorKind kind, string detail) =>

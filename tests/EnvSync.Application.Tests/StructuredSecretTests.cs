@@ -101,12 +101,12 @@ public sealed class StructuredSecretTests
     [InlineData("""{"value":null}""")]
     [InlineData("""{"value":{"a":1}}""")]
     [InlineData("""{"value":[1,2]}""")]
-    public void Select_NonScalarField_IsRejected(string json)
+    public void Select_NonScalarField_IsAnUnsupportedSecretNotAMissingOne(string json)
     {
         var result = StructuredSecret.Select(json, Ref("cfg", "value"));
 
         var error = Assert.Single(result.Errors);
-        Assert.Equal(ErrorKind.FieldNotFound, error.Kind);
+        Assert.Equal(ErrorKind.UnsupportedSecretType, error.Kind);
         Assert.Contains("scalar", error.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -115,12 +115,12 @@ public sealed class StructuredSecretTests
     [InlineData("""{"broken": """)]
     [InlineData("[1,2,3]")]
     [InlineData("")]
-    public void Select_PayloadThatIsNotAJsonObject_IsFieldNotFound(string payload)
+    public void Select_PayloadThatIsNotAJsonObject_IsAnUnsupportedSecretSoAnOptionalVariableCannotHideIt(string payload)
     {
         var result = StructuredSecret.Select(payload, Ref("cfg", "anything"));
 
         var error = Assert.Single(result.Errors);
-        Assert.Equal(ErrorKind.FieldNotFound, error.Kind);
+        Assert.Equal(ErrorKind.UnsupportedSecretType, error.Kind);
         Assert.Contains("JSON", error.Detail, StringComparison.Ordinal);
     }
 

@@ -107,7 +107,7 @@ public sealed class CommonBehaviorTests
     }
 
     [Fact]
-    public async Task AnUnexpectedFailure_ExitsWith13WithoutLeakingAnySecret()
+    public async Task AProviderBug_IsContainedPerVariableAndExitsWith13NotAsAnOutage()
     {
         using var cli = new CliHarness();
         cli.Launcher.Response = Result<int>.Success(0);
@@ -115,10 +115,21 @@ public sealed class CommonBehaviorTests
 
         var result = await cli.RunAsync("check");
 
-        // A provider crash is contained per variable and reported as a provider failure, not as an internal error.
-        Assert.Equal(ExitCodes.ProviderFailure, result.ExitCode);
+        Assert.Equal(ExitCodes.InternalError, result.ExitCode);
+        Assert.Contains("InvalidOperationException", result.Stderr + result.Stdout, StringComparison.Ordinal);
         Assert.Contains("boom", result.Stderr + result.Stdout, StringComparison.Ordinal);
         Assert.DoesNotContain(CliHarness.DbSecret, result.Stderr + result.Stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ANetworkStyleProviderFailure_ExitsWith12BecauseARetryMayHelp()
+    {
+        using var cli = new CliHarness();
+        cli.Provider.Throws("api-key", new IOException("connection reset"));
+
+        var result = await cli.RunAsync("check");
+
+        Assert.Equal(ExitCodes.ProviderFailure, result.ExitCode);
     }
 
     [Fact]

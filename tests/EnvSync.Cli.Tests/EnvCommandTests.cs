@@ -143,7 +143,7 @@ public sealed class EnvCommandTests
 
         var result = await cli.RunAsync("env", "--shell", "cmd");
 
-        Assert.Equal(ExitCodes.ManifestInvalid, result.ExitCode);
+        Assert.Equal(ExitCodes.UnsupportedValue, result.ExitCode);
         Assert.Empty(result.StdoutBytes);
         Assert.Contains("DB_PASSWORD", result.Stderr, StringComparison.Ordinal);
         Assert.Contains("envsync run", result.Stderr, StringComparison.Ordinal);

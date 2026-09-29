@@ -77,6 +77,43 @@ public sealed class ExportEnvironmentQueryHandlerTests
     }
 
     [Fact]
+    public async Task Export_WhenARequiredKeyIsMissing_OffersAFailureScriptCarryingTheExitCode()
+    {
+        using var kv = new FakeSecretProvider();
+        var profile = Create([Provider("kv")], [Variable("A", "kv", "missing")]);
+
+        using var result = await HandlerFor(kv, new FakeShellEmitter())
+            .HandleAsync(new ExportEnvironmentQuery(profile, Sane, ShellKind.Bash), TestContext.Current.CancellationToken);
+
+        Assert.Equal("FAIL 11\n", result.FailureScript);
+    }
+
+    [Fact]
+    public async Task Export_WhenTheShellRefusesAValue_TheFailureScriptCarriesTheUnsupportedValueCode()
+    {
+        using var kv = new FakeSecretProvider().Returns("a", "has%percent");
+        var profile = Create([Provider("kv")], [Variable("A", "kv", "a")]);
+        var emitter = new FakeShellEmitter(ShellKind.Cmd) { Rejects = value => value.Contains('%', StringComparison.Ordinal) };
+
+        using var result = await HandlerFor(kv, emitter)
+            .HandleAsync(new ExportEnvironmentQuery(profile, Sane, ShellKind.Cmd), TestContext.Current.CancellationToken);
+
+        Assert.Equal("FAIL 14\n", result.FailureScript);
+    }
+
+    [Fact]
+    public async Task Export_OnSuccess_HasNoFailureScript()
+    {
+        using var kv = new FakeSecretProvider().Returns("a", "1");
+        var profile = Create([Provider("kv")], [Variable("A", "kv", "a")]);
+
+        using var result = await HandlerFor(kv, new FakeShellEmitter())
+            .HandleAsync(new ExportEnvironmentQuery(profile, Sane, ShellKind.Bash), TestContext.Current.CancellationToken);
+
+        Assert.Empty(result.FailureScript);
+    }
+
+    [Fact]
     public async Task Export_UsesTheEmitterOfTheRequestedShell()
     {
         using var kv = new FakeSecretProvider().Returns("a", "1");

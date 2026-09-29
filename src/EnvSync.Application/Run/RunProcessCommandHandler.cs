@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using EnvSync.Application.Abstractions;
 using EnvSync.Application.Resolution;
+using EnvSync.Domain;
 
 namespace EnvSync.Application.Run;
 
@@ -38,12 +39,27 @@ public sealed class RunProcessCommandHandler : ICommandHandler<RunProcessCommand
         command.Resolved?.Invoke(resolution);
 
         var launch = await _launcher.RunAsync(
-            new ProcessLaunchRequest(command.Executable, command.Arguments, ToAssignments(resolution)),
+            new ProcessLaunchRequest(command.Executable, command.Arguments, ToAssignments(resolution), ToUnset(resolution)),
             cancellationToken);
 
         return launch.IsSuccess
             ? new RunProcessResult(resolution, Launched: true, launch.Value, LaunchError: null)
             : new RunProcessResult(resolution, Launched: false, ExitCodes.For(launch.Errors[0].Kind), launch.Errors[0]);
+    }
+
+    private static ImmutableArray<EnvironmentVariableName> ToUnset(ResolutionResult resolution)
+    {
+        var names = ImmutableArray.CreateBuilder<EnvironmentVariableName>();
+
+        foreach (var outcome in resolution.Outcomes)
+        {
+            if (outcome.Status == VariableStatus.Skipped)
+            {
+                names.Add(outcome.Spec.Name);
+            }
+        }
+
+        return names.ToImmutable();
     }
 
     private static ImmutableArray<EnvironmentAssignment> ToAssignments(ResolutionResult resolution)

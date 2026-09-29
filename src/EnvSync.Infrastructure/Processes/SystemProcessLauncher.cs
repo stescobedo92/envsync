@@ -58,6 +58,14 @@ public sealed class SystemProcessLauncher : IProcessLauncher
             startInfo.Environment[assignment.Name.Value] = value;
         }
 
+        if (!request.Unset.IsDefaultOrEmpty)
+        {
+            foreach (var name in request.Unset)
+            {
+                startInfo.Environment.Remove(name.Value);
+            }
+        }
+
         Process? process;
         try
         {

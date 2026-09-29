@@ -1,3 +1,4 @@
+using EnvSync.Application.Abstractions;
 using EnvSync.Application.Providers;
 using EnvSync.Application.Resolution;
 using EnvSync.Domain;
@@ -264,19 +265,163 @@ public sealed class ResolveEnvironmentQueryHandlerTests
     }
 
     [Fact]
-    public async Task Resolve_ProviderThrowingUnexpectedly_FailsThatVariableOnly()
+    public async Task Resolve_AProviderBug_IsAnInternalErrorNamingTheExceptionTypeAndFailsThatVariableOnly()
     {
         using var kv = new FakeSecretProvider()
             .Returns("ok", "fine")
-            .Throws("boom", new InvalidOperationException("socket closed"));
+            .Throws("boom", new InvalidOperationException("state was corrupt"));
         var profile = Create([Provider("kv")], [Variable("OK", "kv", "ok"), Variable("BOOM", "kv", "boom")]);
 
         var result = await Resolve(HandlerFor(FakeSecretProviderFactory.Returning(FakeType, kv)), profile, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(VariableStatus.Resolved, result.Outcomes[0].Status);
         var failed = result.Outcomes[1];
-        Assert.Equal(ErrorKind.ProviderUnavailable, failed.Error.Kind);
-        Assert.Contains("socket closed", failed.Error.Detail, StringComparison.Ordinal);
+        Assert.Equal(ErrorKind.Internal, failed.Error.Kind);
+        Assert.Contains("InvalidOperationException", failed.Error.Detail, StringComparison.Ordinal);
+        Assert.Contains("state was corrupt", failed.Error.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Resolve_ANetworkStyleException_IsProviderUnavailableSoAnOutageIsNotTakenForABug()
+    {
+        using var kv = new FakeSecretProvider().Throws("a", new IOException("connection reset"));
+        var profile = Create([Provider("kv")], [Variable("A", "kv", "a")]);
+
+        var result = await Resolve(HandlerFor(FakeSecretProviderFactory.Returning(FakeType, kv)), profile, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(ErrorKind.ProviderUnavailable, Assert.Single(result.Errors).Kind);
+    }
+
+    [Fact]
+    public async Task Resolve_ACancellationThatIsNotOurs_IsNotReportedAsATimeout()
+    {
+        using var kv = new FakeSecretProvider().Throws("a", new OperationCanceledException("the provider gave up"));
+        var profile = Create([Provider("kv")], [Variable("A", "kv", "a")]);
+
+        var result = await Resolve(HandlerFor(FakeSecretProviderFactory.Returning(FakeType, kv)), profile, cancellationToken: TestContext.Current.CancellationToken);
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal(ErrorKind.ProviderUnavailable, error.Kind);
+        Assert.DoesNotContain("within", error.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Resolve_AnEmptySecret_IsMissingForARequiredVariable()
+    {
+        using var kv = new FakeSecretProvider().Returns("db-password", string.Empty);
+        var profile = Create([Provider("kv")], [Variable("DB_PASSWORD", "kv", "db-password")]);
+
+        var result = await Resolve(HandlerFor(FakeSecretProviderFactory.Returning(FakeType, kv)), profile, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSatisfied);
+        var outcome = Assert.Single(result.Outcomes);
+        Assert.Equal(VariableStatus.Missing, outcome.Status);
+        Assert.Equal(ErrorKind.SecretEmpty, outcome.Error.Kind);
+        Assert.Contains("empty", outcome.Error.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Resolve_AnEmptySecret_IsSkippedForAnOptionalVariable()
+    {
+        using var kv = new FakeSecretProvider().Returns("log-level", string.Empty);
+        var profile = Create([Provider("kv")], [Variable("LOG_LEVEL", "kv", "log-level", required: false)]);
+
+        var result = await Resolve(HandlerFor(FakeSecretProviderFactory.Returning(FakeType, kv)), profile, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(result.IsSatisfied);
+        Assert.Equal(VariableStatus.Skipped, Assert.Single(result.Outcomes).Status);
+    }
+
+    [Fact]
+    public async Task Resolve_AnEmptySecretIsCaughtEvenWhenTheValueIsNotKept()
+    {
+        using var kv = new FakeSecretProvider().Returns("a", string.Empty);
+        var profile = Create([Provider("kv")], [Variable("A", "kv", "a")]);
+
+        var result = await Resolve(HandlerFor(FakeSecretProviderFactory.Returning(FakeType, kv)), profile, ResolveMode.Verify, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(ErrorKind.SecretEmpty, Assert.Single(result.Errors).Kind);
+    }
+
+    [Fact]
+    public async Task Resolve_AnUnsupportedSecret_IsAFailureEvenForAnOptionalVariable()
+    {
+        using var kv = new FakeSecretProvider().Fails("cfg#value", ErrorKind.UnsupportedSecretType, "not a JSON object");
+        var profile = Create([Provider("kv")], [Variable("CFG", "kv", "cfg#value", required: false)]);
+
+        var result = await Resolve(HandlerFor(FakeSecretProviderFactory.Returning(FakeType, kv)), profile, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSatisfied);
+        Assert.Equal(VariableStatus.Failed, Assert.Single(result.Outcomes).Status);
+    }
+
+    [Fact]
+    public async Task Resolve_EveryCreationErrorIsShownNotJustTheFirst()
+    {
+        var factory = new FakeSecretProviderFactory(FakeType, _ => Result<ISecretProvider>.Failure(
+        [
+            new Error(ErrorKind.ProviderMisconfigured, "kv", "Unknown setting 'adress'."),
+            new Error(ErrorKind.ProviderMisconfigured, "kv", "The 'kv' setting must be 1 or 2."),
+        ]));
+        var profile = Create([Provider("kv")], [Variable("A", "kv", "a")]);
+
+        var result = await Resolve(HandlerFor(factory), profile, cancellationToken: TestContext.Current.CancellationToken);
+
+        var detail = Assert.Single(result.Errors).Detail;
+        Assert.Contains("adress", detail, StringComparison.Ordinal);
+        Assert.Contains("must be 1 or 2", detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Resolve_AFactoryThatThrows_IsReportedAndTheProvidersAlreadyBuiltAreStillDisposed()
+    {
+        var built = new FakeSecretProvider().Returns("a", "1");
+        var good = FakeSecretProviderFactory.Returning("fake-good", built);
+        var bad = new FakeSecretProviderFactory("fake-bad", _ => throw new InvalidOperationException("factory exploded"));
+        var profile = Create(
+            [Provider("good", "fake-good"), Provider("bad", "fake-bad")],
+            [Variable("A", "good", "a"), Variable("B", "bad", "b")]);
+
+        var result = await Resolve(HandlerFor(good, bad), profile, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(VariableStatus.Resolved, result.Outcomes[0].Status);
+        Assert.Equal(ErrorKind.Internal, result.Outcomes[1].Error.Kind);
+        Assert.Contains("factory exploded", result.Outcomes[1].Error.Detail, StringComparison.Ordinal);
+        Assert.True(built.IsDisposed);
+    }
+
+    [Fact]
+    public async Task Resolve_AProviderWhoseDisposeThrows_DoesNotBreakTheResultOrTheOthersCleanup()
+    {
+        var noisy = new FakeSecretProvider { ThrowOnDispose = true }.Returns("a", "1");
+        var quiet = new FakeSecretProvider().Returns("b", "2");
+        var profile = Create(
+            [Provider("noisy", "fake-noisy"), Provider("quiet", "fake-quiet")],
+            [Variable("A", "noisy", "a"), Variable("B", "quiet", "b")]);
+
+        var result = await Resolve(
+            HandlerFor(FakeSecretProviderFactory.Returning("fake-noisy", noisy), FakeSecretProviderFactory.Returning("fake-quiet", quiet)),
+            profile,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(result.IsSatisfied);
+        Assert.True(noisy.IsDisposed);
+        Assert.True(quiet.IsDisposed);
+    }
+
+    [Fact]
+    public async Task Resolve_AnAbsurdlyLargeTimeout_IsClampedInsteadOfCrashing()
+    {
+        using var kv = new FakeSecretProvider().Returns("a", "1");
+        var profile = Create([Provider("kv")], [Variable("A", "kv", "a")]);
+
+        var result = await Resolve(
+            HandlerFor(FakeSecretProviderFactory.Returning(FakeType, kv)),
+            profile,
+            options: new ResolveOptions(4, TimeSpan.FromDays(400)),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(result.IsSatisfied);
     }
 
     [Fact]

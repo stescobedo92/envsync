@@ -107,6 +107,69 @@ public sealed class ShellRoundTripTests
         Assert.Empty(Directory.GetFileSystemEntries(workingDirectory));
     }
 
+    private static string FailureScript(IShellEmitter emitter, int exitCode)
+    {
+        using var writer = new PooledCharBufferWriter(256);
+        emitter.WriteFailure(writer, exitCode);
+        return writer.WrittenSpan.ToString();
+    }
+
+    [Fact]
+    public async Task Bash_TheFailureScript_StopsAScriptThatEvalsItUnderSetEAndKeepsTheExitCode()
+    {
+        var bash = ShellHarness.FindBash();
+        Assert.SkipUnless(bash is not null, "bash is not installed on this machine.");
+        using var cwd = new TempDirectory();
+        var failure = FailureScript(new BashEmitter(), 11).TrimEnd('\n');
+
+        var (exitCode, stdout) = await ShellHarness.RunBashScriptAsync(
+            bash, $"set -e\nscript=$(printf '%s' '{failure}')\neval \"$script\"\necho AFTER\n", cwd.Path, TestContext.Current.CancellationToken);
+
+        Assert.Equal(11, exitCode);
+        Assert.DoesNotContain("AFTER", stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PowerShell7_TheFailureScript_StopsThePipelineThatInvokesIt()
+    {
+        var pwsh = ShellHarness.FindPwsh();
+        Assert.SkipUnless(pwsh is not null, "PowerShell 7 (pwsh) is not installed on this machine.");
+        using var cwd = new TempDirectory();
+
+        var (exitCode, stdout) = await ShellHarness.RunPowerShellScriptAsync(
+            pwsh, FailureScript(new PowerShellEmitter(), 11), cwd.Path, TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(0, exitCode);
+        Assert.DoesNotContain("AFTER", stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WindowsPowerShell51_TheFailureScript_StopsThePipelineThatInvokesIt()
+    {
+        var powershell = ShellHarness.FindWindowsPowerShell();
+        Assert.SkipUnless(powershell is not null, "Windows PowerShell 5.1 exists only on Windows.");
+        using var cwd = new TempDirectory();
+
+        var (exitCode, stdout) = await ShellHarness.RunPowerShellScriptAsync(
+            powershell, FailureScript(new PowerShellEmitter(), 11), cwd.Path, TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(0, exitCode);
+        Assert.DoesNotContain("AFTER", stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Cmd_TheFailureScript_LeavesTheErrorLevelAtTheExitCode()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "cmd.exe exists only on Windows.");
+        using var scriptDir = new TempDirectory();
+        using var cwd = new TempDirectory();
+
+        var (_, stdout) = await ShellHarness.RunCmdScriptAsync(
+            FailureScript(new CmdEmitter(), 11), scriptDir.Path, cwd.Path, TestContext.Current.CancellationToken);
+
+        Assert.Contains("FAILED_WITH_11", stdout, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Bash_ReadsBackEveryValueExactlyAndExecutesNothing()
     {

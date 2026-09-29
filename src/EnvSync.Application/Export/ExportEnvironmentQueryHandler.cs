@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Immutable;
 using EnvSync.Application.Abstractions;
 using EnvSync.Application.Buffers;
@@ -31,7 +32,7 @@ public sealed class ExportEnvironmentQueryHandler : IQueryHandler<ExportEnvironm
 
         if (!resolution.IsSatisfied)
         {
-            return new ExportResult(resolution, [], script: null);
+            return new ExportResult(resolution, [], script: null, RenderFailure(emitter, ExitCodes.For(resolution)));
         }
 
         var script = new PooledCharBufferWriter();
@@ -55,7 +56,15 @@ public sealed class ExportEnvironmentQueryHandler : IQueryHandler<ExportEnvironm
         }
 
         script.Dispose();
-        return new ExportResult(resolution, errors.ToImmutable(), script: null);
+        var emitErrors = errors.ToImmutable();
+        return new ExportResult(resolution, emitErrors, script: null, RenderFailure(emitter, ExitCodes.For(emitErrors)));
+    }
+
+    private static string RenderFailure(IShellEmitter emitter, int exitCode)
+    {
+        var writer = new ArrayBufferWriter<char>();
+        emitter.WriteFailure(writer, exitCode);
+        return writer.WrittenSpan.ToString();
     }
 
     private IShellEmitter FindEmitter(ShellKind shell)

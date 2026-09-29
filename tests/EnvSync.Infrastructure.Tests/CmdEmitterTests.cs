@@ -52,6 +52,16 @@ public sealed class CmdEmitterTests
     }
 
     [Fact]
+    public void WriteFailure_SetsTheErrorLevelWithoutClosingTheConsole()
+    {
+        using var writer = new PooledCharBufferWriter(64);
+
+        _emitter.WriteFailure(writer, 11);
+
+        Assert.Equal("cmd /c exit 11\r\n", writer.WrittenSpan.ToString());
+    }
+
+    [Fact]
     public void TryWriteVariable_DoesNotAllocate()
     {
         using var writer = new PooledCharBufferWriter(4096);

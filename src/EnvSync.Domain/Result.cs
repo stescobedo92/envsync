@@ -5,25 +5,32 @@ namespace EnvSync.Domain;
 /// <summary>
 /// Outcome of an operation that can fail in expected ways. The success path allocates nothing;
 /// a failure carries every error found, so a caller can report them all in one pass.
+/// A <c>default</c> instance is a <em>failure</em>, never an accidental success.
 /// </summary>
 public readonly struct Result<T>
 {
+    private static readonly Error Uninitialized = new(ErrorKind.Internal, "result", "A default Result was used instead of Success or Failure.");
+
     private readonly T? _value;
     private readonly ImmutableArray<Error> _errors;
+    private readonly bool _initialized;
 
     private Result(T? value, ImmutableArray<Error> errors)
     {
         _value = value;
         _errors = errors;
+        _initialized = true;
     }
 
-    public bool IsSuccess => _errors.IsDefaultOrEmpty;
+    public bool IsSuccess => _initialized && _errors.IsDefaultOrEmpty;
 
     public T Value => IsSuccess
         ? _value!
         : throw new InvalidOperationException("The result is a failure and carries no value.");
 
-    public ImmutableArray<Error> Errors => _errors.IsDefault ? [] : _errors;
+    public ImmutableArray<Error> Errors => !_initialized
+        ? [Uninitialized]
+        : _errors.IsDefault ? [] : _errors;
 
     public static Result<T> Success(T value) => new(value, default);
 

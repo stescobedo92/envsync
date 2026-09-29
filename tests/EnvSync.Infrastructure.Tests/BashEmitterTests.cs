@@ -71,6 +71,16 @@ public sealed class BashEmitterTests
     }
 
     [Fact]
+    public void WriteFailure_MakesTheConsumerFailWithTheExitCodeWithoutClosingAnInteractiveShell()
+    {
+        using var writer = new PooledCharBufferWriter(64);
+
+        _emitter.WriteFailure(writer, 11);
+
+        Assert.Equal("(exit 11)\n", writer.WrittenSpan.ToString());
+    }
+
+    [Fact]
     public void TryWriteVariable_EmitsOneStatementPerCall()
     {
         using var writer = new PooledCharBufferWriter(256);

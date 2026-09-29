@@ -18,6 +18,9 @@ public sealed class FakeSecretProvider : ISecretProvider, IDisposable
 
     public TimeSpan Delay { get; init; }
 
+    /// <summary>Makes <see cref="Dispose"/> throw, to prove a failing provider cannot break the others' cleanup.</summary>
+    public bool ThrowOnDispose { get; init; }
+
     public int CallCount => Volatile.Read(ref _calls);
 
     public int MaxConcurrency => Volatile.Read(ref _maxInFlight);
@@ -82,7 +85,15 @@ public sealed class FakeSecretProvider : ISecretProvider, IDisposable
         }
     }
 
-    public void Dispose() => IsDisposed = true;
+    public void Dispose()
+    {
+        IsDisposed = true;
+
+        if (ThrowOnDispose)
+        {
+            throw new InvalidOperationException("dispose failed");
+        }
+    }
 
     private void TrackConcurrency(int current)
     {

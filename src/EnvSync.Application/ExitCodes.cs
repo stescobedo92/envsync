@@ -16,6 +16,9 @@ public static class ExitCodes
     public const int ProviderFailure = 12;
     public const int InternalError = 13;
 
+    /// <summary>A secret exists but the requested shell cannot carry its value safely; <c>run</c> may still be able to.</summary>
+    public const int UnsupportedValue = 14;
+
     /// <summary>The command line itself is wrong: bad option, missing argument, unsafe request (sysexits.h EX_USAGE).</summary>
     public const int UsageError = 64;
 
@@ -31,10 +34,11 @@ public static class ExitCodes
     public static int For(ErrorKind kind) => kind switch
     {
         ErrorKind.ManifestInvalid or ErrorKind.ProviderUnknown or ErrorKind.ProviderMisconfigured
-            or ErrorKind.FieldRequired or ErrorKind.UnsupportedValueForShell => ManifestInvalid,
-        ErrorKind.SecretNotFound or ErrorKind.FieldNotFound => MissingRequired,
+            or ErrorKind.FieldRequired => ManifestInvalid,
+        ErrorKind.SecretNotFound or ErrorKind.SecretEmpty or ErrorKind.FieldNotFound => MissingRequired,
         ErrorKind.AuthenticationFailed or ErrorKind.Timeout or ErrorKind.ProviderUnavailable
             or ErrorKind.UnsupportedSecretType => ProviderFailure,
+        ErrorKind.UnsupportedValueForShell => UnsupportedValue,
         ErrorKind.ProcessLaunchFailed => LaunchFailed,
         ErrorKind.ExecutableNotFound => ExecutableNotFound,
         _ => InternalError,
@@ -70,7 +74,7 @@ public static class ExitCodes
     {
         LaunchFailed or ExecutableNotFound => 5,
         InternalError => 4,
-        ManifestInvalid => 3,
+        ManifestInvalid or UnsupportedValue => 3,
         ProviderFailure => 2,
         MissingRequired => 1,
         _ => 0,

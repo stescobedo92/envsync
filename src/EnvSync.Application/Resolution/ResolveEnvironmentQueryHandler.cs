@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.Net.Http;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using EnvSync.Application.Abstractions;
 using EnvSync.Application.Providers;
@@ -13,6 +15,9 @@ namespace EnvSync.Application.Resolution;
 /// </summary>
 public sealed class ResolveEnvironmentQueryHandler : IQueryHandler<ResolveEnvironmentQuery, ResolutionResult>
 {
+    // CancellationTokenSource.CancelAfter throws above this; a per-secret budget of 24 days is a mistake, not a setting.
+    private static readonly TimeSpan MaxTimeout = TimeSpan.FromMilliseconds(int.MaxValue);
+
     private readonly ProviderRegistry _registry;
 
     public ResolveEnvironmentQueryHandler(ProviderRegistry registry)
@@ -29,9 +34,12 @@ public sealed class ResolveEnvironmentQueryHandler : IQueryHandler<ResolveEnviro
             return new ResolutionResult([]);
         }
 
-        var providers = CreateProviders(query.Profile);
+        // Created before the try so that whatever was built is disposed even when a later factory misbehaves.
+        var providers = new Dictionary<string, Result<ISecretProvider>>(StringComparer.Ordinal);
         try
         {
+            CreateProviders(query.Profile, providers);
+
             var outcomes = query.Mode == ResolveMode.Offline
                 ? Unverified(variables, providers)
                 : await FetchAsync(query, variables, providers, cancellationToken);
@@ -44,26 +52,36 @@ public sealed class ResolveEnvironmentQueryHandler : IQueryHandler<ResolveEnviro
         }
     }
 
-    private Dictionary<string, Result<ISecretProvider>> CreateProviders(Profile profile)
+    private void CreateProviders(Profile profile, Dictionary<string, Result<ISecretProvider>> providers)
     {
-        var providers = new Dictionary<string, Result<ISecretProvider>>(StringComparer.Ordinal);
-
         foreach (var variable in profile.Variables)
         {
-            if (providers.ContainsKey(variable.From))
+            if (!providers.ContainsKey(variable.From))
             {
-                continue;
+                providers[variable.From] = CreateProvider(profile, variable.From);
             }
+        }
+    }
 
-            providers[variable.From] = FindDefinition(profile, variable.From) is { } definition
-                ? _registry.Create(definition)
-                : Result<ISecretProvider>.Failure(new Error(
-                    ErrorKind.ProviderUnknown,
-                    variable.From,
-                    $"Provider '{variable.From}' is not declared in profile '{profile.Name}'."));
+    private Result<ISecretProvider> CreateProvider(Profile profile, string alias)
+    {
+        if (FindDefinition(profile, alias) is not { } definition)
+        {
+            return Result<ISecretProvider>.Failure(new Error(
+                ErrorKind.ProviderUnknown,
+                alias,
+                $"Provider '{alias}' is not declared in profile '{profile.Name}'."));
         }
 
-        return providers;
+        try
+        {
+            return _registry.Create(definition);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The factory contract is to return a failure; one that throws is a bug, and must not take the other providers down.
+            return Result<ISecretProvider>.Failure(new Error(ErrorKind.Internal, alias, $"{exception.GetType().Name}: {exception.Message}"));
+        }
     }
 
     private static ProviderDefinition? FindDefinition(Profile profile, string alias)
@@ -91,7 +109,7 @@ public sealed class ResolveEnvironmentQueryHandler : IQueryHandler<ResolveEnviro
             var created = providers[spec.From];
             outcomes[i] = created.IsSuccess
                 ? new VariableOutcome(spec, VariableStatus.Unverified, default, default)
-                : ProviderUnavailable(spec, created.Errors[0]);
+                : CreationFailed(spec, created.Errors);
         }
 
         return outcomes;
@@ -129,13 +147,14 @@ public sealed class ResolveEnvironmentQueryHandler : IQueryHandler<ResolveEnviro
     {
         if (!created.IsSuccess)
         {
-            return ProviderUnavailable(spec, created.Errors[0]);
+            return CreationFailed(spec, created.Errors);
         }
 
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        if (timeout > TimeSpan.Zero)
+        var effectiveTimeout = timeout > MaxTimeout ? MaxTimeout : timeout;
+        if (effectiveTimeout > TimeSpan.Zero)
         {
-            budget.CancelAfter(timeout);
+            budget.CancelAfter(effectiveTimeout);
         }
 
         Result<SecretValue> fetched;
@@ -145,33 +164,58 @@ public sealed class ResolveEnvironmentQueryHandler : IQueryHandler<ResolveEnviro
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return Failed(spec, ErrorKind.Timeout, $"Provider '{spec.From}' did not answer within {timeout.TotalSeconds:0.##}s.");
+            // Only our own budget running out is a timeout; a provider that cancels itself is a different, unexplained problem.
+            return budget.IsCancellationRequested
+                ? Failed(spec, ErrorKind.Timeout, $"Provider '{spec.From}' did not answer within {effectiveTimeout.TotalSeconds:0.##}s.")
+                : Failed(spec, ErrorKind.ProviderUnavailable, $"Provider '{spec.From}' cancelled the request on its own.");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            return Failed(spec, ErrorKind.ProviderUnavailable, $"Provider '{spec.From}' failed: {ex.Message}");
+            return Failed(spec, Classify(exception), $"Provider '{spec.From}' failed: {exception.GetType().Name}: {exception.Message}");
         }
 
         return ToOutcome(spec, fetched, retain);
     }
 
+    /// <summary>An I/O style failure is an outage worth retrying; anything else is a bug and is reported as one.</summary>
+    private static ErrorKind Classify(Exception exception) =>
+        exception is IOException or HttpRequestException or SocketException or TimeoutException
+            ? ErrorKind.ProviderUnavailable
+            : ErrorKind.Internal;
+
     private static VariableOutcome ToOutcome(VariableSpec spec, Result<SecretValue> fetched, bool retain)
     {
         if (fetched.IsSuccess)
         {
-            return new VariableOutcome(spec, VariableStatus.Resolved, retain ? fetched.Value : default, default);
+            // An empty secret is not a value: a required variable must not "resolve" to nothing (on Windows the child
+            // would not even see it), and this is checked before the value is dropped in Verify mode.
+            return fetched.Value.Reveal().Length == 0
+                ? Absent(spec, new Error(ErrorKind.SecretEmpty, spec.Name.Value, "The secret exists but its value is empty."))
+                : new VariableOutcome(spec, VariableStatus.Resolved, retain ? fetched.Value : default, default);
         }
 
         var error = fetched.Errors[0] with { Subject = spec.Name.Value };
-        var status = error.Kind is ErrorKind.SecretNotFound or ErrorKind.FieldNotFound
-            ? (spec.Required ? VariableStatus.Missing : VariableStatus.Skipped)
-            : VariableStatus.Failed;
-
-        return new VariableOutcome(spec, status, default, error);
+        return IsAbsence(error.Kind)
+            ? Absent(spec, error)
+            : new VariableOutcome(spec, VariableStatus.Failed, default, error);
     }
 
-    private static VariableOutcome ProviderUnavailable(VariableSpec spec, Error creationError) =>
-        Failed(spec, creationError.Kind, $"Provider '{spec.From}': {creationError.Detail}");
+    /// <summary>
+    /// Only "there is nothing there" may be tolerated for an optional variable. A wrong shape, a rejected credential or a timeout
+    /// says something is broken, and hiding it would let a program run half-configured.
+    /// </summary>
+    private static bool IsAbsence(ErrorKind kind) =>
+        kind is ErrorKind.SecretNotFound or ErrorKind.FieldNotFound or ErrorKind.SecretEmpty;
+
+    private static VariableOutcome Absent(VariableSpec spec, Error error) =>
+        new(spec, spec.Required ? VariableStatus.Missing : VariableStatus.Skipped, default, error);
+
+    private static VariableOutcome CreationFailed(VariableSpec spec, ImmutableArray<Error> errors)
+    {
+        // Every problem, so the user fixes them all in one pass instead of one per run.
+        var detail = string.Join(" ", errors.Select(static e => e.Detail).Where(static d => d.Length > 0).Distinct(StringComparer.Ordinal));
+        return Failed(spec, errors[0].Kind, $"Provider '{spec.From}': {detail}");
+    }
 
     private static VariableOutcome Failed(VariableSpec spec, ErrorKind kind, string detail) =>
         new(spec, VariableStatus.Failed, default, new Error(kind, spec.Name.Value, detail));
@@ -185,15 +229,23 @@ public sealed class ResolveEnvironmentQueryHandler : IQueryHandler<ResolveEnviro
                 continue;
             }
 
-            switch (created.Value)
+            try
             {
-                case IAsyncDisposable asyncDisposable:
-                    await asyncDisposable.DisposeAsync();
-                    break;
-                case IDisposable disposable:
-                    disposable.Dispose();
-                    break;
+                switch (created.Value)
+                {
+                    case IAsyncDisposable asyncDisposable:
+                        await asyncDisposable.DisposeAsync();
+                        break;
+                    case IDisposable disposable:
+                        disposable.Dispose();
+                        break;
+                }
             }
+#pragma warning disable CA1031 // A provider that fails to clean up must neither mask the result nor stop the others from being cleaned up.
+            catch (Exception)
+            {
+            }
+#pragma warning restore CA1031
         }
     }
 }

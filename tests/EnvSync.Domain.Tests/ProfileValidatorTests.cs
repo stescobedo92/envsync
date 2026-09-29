@@ -80,6 +80,32 @@ public sealed class ProfileValidatorTests
     }
 
     [Fact]
+    public void Validate_VariableNamesThatDifferOnlyByCase_AreDuplicatesBecauseWindowsWouldMergeThem()
+    {
+        var profile = ProfileOf([Provider("kv")], [Variable("Api_Key", "kv"), Variable("API_KEY", "kv", "other")]);
+
+        var error = Assert.Single(ProfileValidator.Validate(profile));
+
+        Assert.Equal(ErrorKind.ManifestInvalid, error.Kind);
+        Assert.Equal("API_KEY", error.Subject);
+    }
+
+    [Theory]
+    [InlineData("PATH")]
+    [InlineData("LD_PRELOAD")]
+    [InlineData("PROMPT_COMMAND")]
+    public void Validate_AReservedName_IsRejectedBecauseASecretManagerMustNotRewireTheShell(string name)
+    {
+        var profile = ProfileOf([Provider("kv")], [Variable(name, "kv")]);
+
+        var error = Assert.Single(ProfileValidator.Validate(profile));
+
+        Assert.Equal(ErrorKind.ManifestInvalid, error.Kind);
+        Assert.Equal(name, error.Subject);
+        Assert.Contains("reserved", error.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Validate_ProfileWithoutVariables_IsAllowed()
     {
         var profile = ProfileOf([Provider("kv")], []);

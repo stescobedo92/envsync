@@ -11,7 +11,10 @@ public static class ProfileValidator
 
         var errors = ImmutableArray.CreateBuilder<Error>();
         var aliases = new HashSet<string>(StringComparer.Ordinal);
-        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        // Case-insensitive on every OS: Windows merges names that differ only by case, so a manifest must not
+        // mean one thing there and another elsewhere.
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var provider in profile.Providers)
         {
@@ -34,6 +37,14 @@ public static class ProfileValidator
                     ErrorKind.ManifestInvalid,
                     name,
                     $"Variable '{name}' is declared more than once."));
+            }
+
+            if (ReservedVariableNames.IsReserved(name))
+            {
+                errors.Add(new Error(
+                    ErrorKind.ManifestInvalid,
+                    name,
+                    $"'{name}' is a reserved variable name: a secret must not be able to change where programs are loaded from or how a shell behaves."));
             }
 
             if (!aliases.Contains(variable.From))

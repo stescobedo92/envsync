@@ -52,6 +52,16 @@ public sealed class ResultTests
     }
 
     [Fact]
+    public void Default_IsAFailureNotAnAccidentalSuccess()
+    {
+        var uninitialized = default(Result<int>);
+
+        Assert.False(uninitialized.IsSuccess);
+        Assert.Equal(ErrorKind.Internal, Assert.Single(uninitialized.Errors).Kind);
+        Assert.Throws<InvalidOperationException>(() => uninitialized.Value);
+    }
+
+    [Fact]
     public void Success_DoesNotAllocate()
     {
         var allocated = AllocationProbe.Measure(() => Result<int>.Success(7));

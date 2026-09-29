@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using EnvSync.Application.Abstractions;
 using EnvSync.Domain;
 
@@ -37,6 +38,10 @@ public sealed class CmdEmitter : IShellEmitter
         output.Advance(cursor.Length);
         return true;
     }
+
+    /// <summary><c>cmd /c exit N</c> sets the error level without closing the console, which a bare <c>exit</c> would.</summary>
+    public void WriteFailure(IBufferWriter<char> output, int exitCode) =>
+        output.Write(string.Create(CultureInfo.InvariantCulture, $"cmd /c exit {exitCode}\r\n"));
 
     private static bool IsSafe(char c) => c is >= ' ' and <= '~' and not ('%' or '"' or '!' or '^');
 }

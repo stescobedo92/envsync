@@ -27,6 +27,13 @@ public sealed class FakeShellEmitter : IShellEmitter
         return true;
     }
 
+    public void WriteFailure(IBufferWriter<char> output, int exitCode)
+    {
+        Append(output, "FAIL ");
+        Append(output, exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Append(output, "\n");
+    }
+
     private static void Append(IBufferWriter<char> output, ReadOnlySpan<char> text)
     {
         text.CopyTo(output.GetSpan(text.Length));

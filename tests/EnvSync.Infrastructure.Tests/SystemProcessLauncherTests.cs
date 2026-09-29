@@ -180,6 +180,33 @@ public sealed class SystemProcessLauncherTests
     }
 
     [Fact]
+    public async Task Run_NamesToUnset_AreRemovedEvenWhenTheParentEnvironmentHasThem()
+    {
+        var stale = "ENVSYNC_STALE_" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable(stale, "stale-value-from-an-earlier-session");
+        try
+        {
+            using var dir = new TempDirectory();
+            var report = dir.Combine("report.txt");
+            var request = new ProcessLaunchRequest(
+                Child,
+                ChildArgs(report, "exit=0"),
+                [new EnvironmentAssignment(EmitterAssert.Name("PROBE_VARS"), new SecretValue(stale))],
+                [EmitterAssert.Name(stale)]);
+
+            var result = await LauncherWith().RunAsync(request, TestContext.Current.CancellationToken);
+
+            Assert.True(result.IsSuccess);
+            var seen = await ReadReportAsync(report, TestContext.Current.CancellationToken);
+            Assert.Null(seen.Environment[stale]);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(stale, null);
+        }
+    }
+
+    [Fact]
     public async Task Run_ExecutableThatDoesNotExist_ReportsExecutableNotFound()
     {
         var result = await LauncherWith().RunAsync(

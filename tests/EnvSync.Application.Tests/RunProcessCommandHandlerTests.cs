@@ -60,6 +60,18 @@ public sealed class RunProcessCommandHandlerTests
     }
 
     [Fact]
+    public async Task Run_SkippedOptionalVariables_AreUnsetInTheChildSoAStaleInheritedValueCannotSurvive()
+    {
+        using var kv = new FakeSecretProvider().Returns("a", "1");
+        var launcher = new FakeProcessLauncher();
+        var profile = Create([Provider("kv")], [Variable("A", "kv", "a"), Variable("OPT", "kv", "nope", required: false)]);
+
+        await HandlerFor(kv, launcher).HandleAsync(new RunProcessCommand(profile, Sane, "app", []), TestContext.Current.CancellationToken);
+
+        Assert.Equal("OPT", Assert.Single(launcher.LastRequest.Unset).Value);
+    }
+
+    [Fact]
     public async Task Run_WhenARequiredKeyIsMissing_DoesNotLaunchAndExplainsWhy()
     {
         using var kv = new FakeSecretProvider().Returns("a", "1");

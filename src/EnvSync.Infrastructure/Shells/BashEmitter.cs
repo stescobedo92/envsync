@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using EnvSync.Application.Abstractions;
 using EnvSync.Domain;
 
@@ -63,4 +64,8 @@ public sealed class BashEmitter : IShellEmitter
         output.Advance(cursor.Length);
         return true;
     }
+
+    /// <summary><c>(exit N)</c> runs in a subshell: it fails under <c>set -e</c> without closing an interactive session.</summary>
+    public void WriteFailure(IBufferWriter<char> output, int exitCode) =>
+        output.Write(string.Create(CultureInfo.InvariantCulture, $"(exit {exitCode})\n"));
 }

@@ -138,6 +138,61 @@ internal static class ShellHarness
         return [.. values.Select(v => v ?? string.Empty)];
     }
 
+    /// <summary>Runs a whole script with <c>set -e</c> semantics available to it, then reports how the shell ended.</summary>
+    public static async Task<(int ExitCode, string Stdout)> RunBashScriptAsync(
+        string bash, string script, string workingDirectory, CancellationToken cancellationToken)
+    {
+        var result = await RunRawAsync(
+            bash,
+            ["--noprofile", "--norc", "-s"],
+            rawArguments: null,
+            Encoding.UTF8.GetBytes(script),
+            workingDirectory,
+            cancellationToken);
+
+        return (result.ExitCode, Encoding.UTF8.GetString(result.Stdout));
+    }
+
+    /// <summary>Pipes the script into <c>Invoke-Expression</c> line by line with errors terminating, then prints AFTER if it got that far.</summary>
+    public static async Task<(int ExitCode, string Stdout)> RunPowerShellScriptAsync(
+        string powershell, string script, string workingDirectory, CancellationToken cancellationToken)
+    {
+        var harness = $$"""
+            $ErrorActionPreference = 'Stop'
+            $script = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{Convert.ToBase64String(Encoding.UTF8.GetBytes(script))}}'))
+            $script -split "`n" | Where-Object { $_ -ne '' } | Invoke-Expression
+            [Console]::Out.Write('AFTER')
+            """;
+
+        var result = await RunRawAsync(
+            powershell,
+            ["-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(harness))],
+            rawArguments: null,
+            stdin: null,
+            workingDirectory,
+            cancellationToken);
+
+        return (result.ExitCode, Encoding.UTF8.GetString(result.Stdout));
+    }
+
+    /// <summary>Calls the script from a real <c>.cmd</c> file, then prints FAILED_WITH_11 if the error level ended up at 11 or more.</summary>
+    public static async Task<(int ExitCode, string Stdout)> RunCmdScriptAsync(
+        string script, string scriptDirectory, string workingDirectory, CancellationToken cancellationToken)
+    {
+        var scriptPath = Path.Combine(scriptDirectory, "run.cmd");
+        await File.WriteAllTextAsync(scriptPath, "@echo off\r\n" + script, Encoding.ASCII, cancellationToken);
+
+        var result = await RunRawAsync(
+            "cmd.exe",
+            argumentList: null,
+            rawArguments: $"/d /s /c \"call \"{scriptPath}\" & if errorlevel 11 echo FAILED_WITH_11\"",
+            stdin: null,
+            workingDirectory,
+            cancellationToken);
+
+        return (result.ExitCode, Encoding.Latin1.GetString(result.Stdout));
+    }
+
     private static List<string> SplitOnNul(byte[] stdout)
     {
         var parts = Encoding.UTF8.GetString(stdout).Split('\0').ToList();
@@ -150,6 +205,23 @@ internal static class ShellHarness
     }
 
     private static async Task<byte[]> RunAsync(
+        string fileName,
+        string[]? argumentList,
+        string? rawArguments,
+        byte[]? stdin,
+        string workingDirectory,
+        CancellationToken cancellationToken)
+    {
+        var result = await RunRawAsync(fileName, argumentList, rawArguments, stdin, workingDirectory, cancellationToken);
+        if (result.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"{Path.GetFileName(fileName)} exited with {result.ExitCode}. stderr: {result.Stderr}");
+        }
+
+        return result.Stdout;
+    }
+
+    private static async Task<(int ExitCode, byte[] Stdout, string Stderr)> RunRawAsync(
         string fileName,
         string[]? argumentList,
         string? rawArguments,
@@ -201,14 +273,7 @@ internal static class ShellHarness
             throw new TimeoutException($"{Path.GetFileName(fileName)} did not finish within {MaxRuntime.TotalSeconds:0}s.");
         }
 
-        var output = await stdout;
-        var error = await stderr;
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"{Path.GetFileName(fileName)} exited with {process.ExitCode}. stderr: {error}");
-        }
-
-        return output;
+        return (process.ExitCode, await stdout, await stderr);
     }
 
     private static async Task<byte[]> ReadAllAsync(Stream stream, CancellationToken cancellationToken)

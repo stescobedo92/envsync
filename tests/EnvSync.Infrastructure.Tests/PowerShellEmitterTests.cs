@@ -73,6 +73,16 @@ public sealed class PowerShellEmitterTests
     }
 
     [Fact]
+    public void WriteFailure_ThrowsSoAnInvokeExpressionPipelineStopsAndSaysWhy()
+    {
+        using var writer = new PooledCharBufferWriter(128);
+
+        _emitter.WriteFailure(writer, 11);
+
+        Assert.Equal("throw 'envsync: could not set the environment (exit code 11); see the messages above.'\n", writer.WrittenSpan.ToString());
+    }
+
+    [Fact]
     public void TryWriteVariable_ValueWithNul_IsRefusedAndNothingIsWritten()
     {
         var (accepted, output) = EmitterAssert.Emit(_emitter, "A", "bad\0value");
