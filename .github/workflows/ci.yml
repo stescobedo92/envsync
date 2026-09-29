@@ -28,6 +28,39 @@ jobs:
       - name: Test
         run: dotnet test --solution envsync.slnx -c Release --no-build
 
+  # The tool is meant to be publishable as a single native binary. This proves it on each operating system, and runs the same
+  # end-to-end scenarios against that binary instead of the framework-dependent build.
+  aot:
+    name: native AOT ${{ matrix.rid }}
+    needs: build-and-test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, rid: linux-x64, ext: "" }
+          - { os: windows-latest, rid: win-x64, ext: ".exe" }
+          - { os: macos-latest, rid: osx-arm64, ext: "" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Native AOT toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      - name: Publish native binary
+        run: dotnet publish src/EnvSync.Cli -c Release -r ${{ matrix.rid }} -p:PublishAot=true -o aot
+
+      - name: End-to-end tests against the native binary
+        shell: bash
+        env:
+          ENVSYNC_E2E_BINARY: ${{ github.workspace }}/aot/envsync${{ matrix.ext }}
+        run: dotnet test --project tests/EnvSync.Cli.Tests -c Release --filter-class "*EndToEndTests"
+
   pack:
     name: pack the dotnet tool
     needs: build-and-test

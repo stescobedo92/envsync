@@ -96,6 +96,22 @@ internal sealed class CommandContext
         return (profile, ExitCodes.Success);
     }
 
+    /// <summary>
+    /// stdout is buffered and stderr is not, so without this a message on stderr can appear <em>before</em> the report it refers to.
+    /// A closed pipe is ignored: the exit code matters more than a report nobody is reading.
+    /// </summary>
+    public async ValueTask FlushStandardOutputAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await StandardOutput.FlushAsync(cancellationToken);
+        }
+        catch (IOException)
+        {
+            // Nobody is reading stdout any more.
+        }
+    }
+
     /// <summary>The statement that makes whoever evaluates <c>env</c>'s output fail with <paramref name="exitCode"/>.</summary>
     public string FailureScript(ShellKind shell, int exitCode)
     {

@@ -224,9 +224,11 @@ Cli             System.CommandLine y la raíz de composición (DI "a mano", sin 
   llamadas de red de los SDK ni al materializar el valor final del secreto como `string`.
 - **Resolución concurrente y acotada**: un proveedor por alias, tope de peticiones simultáneas, timeout por secreto y un arreglo
   preasignado donde cada tarea escribe su posición (sin locks, orden estable). Una factoría o un `Dispose` que lance no rompe la ejecución.
-- **Preparado para Native AOT**: los analizadores de trimming/AOT están activos en todo `src/` con warnings como errores, y el código
-  propio no usa reflexión ni escaneo de ensamblados. **Aún no se ha publicado como AOT**: no se ha verificado que los SDK de Azure y
-  AWS lo permitan.
+- **Native AOT, verificado en Windows**: los analizadores de trimming/AOT están activos en todo `src/` con warnings como errores, el
+  código propio no usa reflexión ni escaneo de ensamblados, y `dotnet publish src/EnvSync.Cli -r win-x64 -p:PublishAot=true` produce
+  un único binario nativo de 16,5 MB **sin ningún aviso** y sin necesitar el runtime de .NET. Las pruebas de extremo a extremo pasan
+  contra ese binario (`ENVSYNC_E2E_BINARY=<ruta>`). Necesita las herramientas C++ del SO (Visual Studio en Windows, `clang` en Linux);
+  en Windows hay que tener `vswhere` en el `PATH`. **Linux y macOS no se han probado aquí**: lo hace el trabajo `aot` del CI.
 
 ## Desarrollo
 
@@ -242,4 +244,5 @@ dotnet test --solution envsync.slnx
 - Las pruebas contra shells reales se **omiten**, no se simulan, si el shell no está instalado en la máquina.
 - `tests/EnvSync.Cli.Tests/EndToEndTests.cs` ejecuta el binario real contra un Vault simulado en loopback y un proceso hijo real, e incluye
   el idioma `for /f` de cmd contra un `cmd.exe` real.
-- Estos tests solo se han ejecutado en Windows. La matriz de `.github/workflows/ci.yml` está pensada para ejecutarlos en Linux y macOS.
+- Estos tests solo se han ejecutado en Windows. La matriz de `.github/workflows/ci.yml` está pensada para ejecutarlos en Linux y macOS,
+  y su trabajo `aot` publica el binario nativo en cada SO y le pasa los tests de extremo a extremo.

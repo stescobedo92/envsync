@@ -14,7 +14,12 @@ public sealed class EndToEndTests : IDisposable
     private const string Token = "hvs.e2e-token";
     private const string Password = "e2e p@ss 'quoted' $HOME";
 
-    private static readonly string Envsync = Path.Combine(AppContext.BaseDirectory, "envsync" + (OperatingSystem.IsWindows() ? ".exe" : string.Empty));
+    // ENVSYNC_E2E_BINARY points these tests at another build of the tool, for example the Native AOT one, so the same scenarios
+    // prove that a published binary behaves like the one under test.
+    private static readonly string Envsync =
+        Environment.GetEnvironmentVariable("ENVSYNC_E2E_BINARY") is { Length: > 0 } custom
+            ? custom
+            : Path.Combine(AppContext.BaseDirectory, "envsync" + (OperatingSystem.IsWindows() ? ".exe" : string.Empty));
     private static readonly string Child = Path.Combine(AppContext.BaseDirectory, "EnvSync.TestChild" + (OperatingSystem.IsWindows() ? ".exe" : string.Empty));
 
     private readonly HttpListener _vault = new();

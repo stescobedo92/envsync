@@ -83,6 +83,8 @@ internal sealed class CheckCommand
         if (exitCode != ExitCodes.Success)
         {
             // stdout carries the report, and a script may well be discarding it: a failure must not be silent on stderr too.
+            // The report goes out first, so "see the report above" is true.
+            await _context.FlushStandardOutputAsync(cancellationToken);
             _context.StandardError.WriteLine($"error: {result.Errors.Length} problem(s) found; see the report above (exit code {exitCode}).");
         }
 
