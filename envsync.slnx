@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EnvSync.Application/EnvSync.Application.csproj" />
+    <Project Path="src/EnvSync.Cli/EnvSync.Cli.csproj" />
+    <Project Path="src/EnvSync.Domain/EnvSync.Domain.csproj" />
+    <Project Path="src/EnvSync.Infrastructure/EnvSync.Infrastructure.csproj" />
+    <Project Path="src/EnvSync.Providers.Aws/EnvSync.Providers.Aws.csproj" />
+    <Project Path="src/EnvSync.Providers.Azure/EnvSync.Providers.Azure.csproj" />
+    <Project Path="src/EnvSync.Providers.Vault/EnvSync.Providers.Vault.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EnvSync.Application.Tests/EnvSync.Application.Tests.csproj" />
+    <Project Path="tests/EnvSync.Cli.Tests/EnvSync.Cli.Tests.csproj" />
+    <Project Path="tests/EnvSync.Domain.Tests/EnvSync.Domain.Tests.csproj" />
+    <Project Path="tests/EnvSync.Infrastructure.Tests/EnvSync.Infrastructure.Tests.csproj" />
+    <Project Path="tests/EnvSync.Providers.Aws.Tests/EnvSync.Providers.Aws.Tests.csproj" />
+    <Project Path="tests/EnvSync.Providers.Azure.Tests/EnvSync.Providers.Azure.Tests.csproj" />
+    <Project Path="tests/EnvSync.Providers.Vault.Tests/EnvSync.Providers.Vault.Tests.csproj" />
+    <Project Path="tests/EnvSync.TestSupport/EnvSync.TestSupport.csproj" />
+  </Folder>
+</Solution>

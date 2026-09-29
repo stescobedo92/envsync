@@ -1,0 +1,4 @@
+# One line-ending policy on Windows, Linux and macOS.
+* text=auto eol=lf
+*.png binary
+*.ico binary

@@ -1,0 +1,23 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+artifacts/
+publish/
+*.nupkg
+*.snupkg
+
+# Test output
+TestResults/
+*.trx
+coverage/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# Secrets must never be committed: this tool exists to avoid plain-text env files.
+.env
+.env.*
+!.env.example

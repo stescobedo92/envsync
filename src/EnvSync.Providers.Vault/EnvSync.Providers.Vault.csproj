@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\EnvSync.Application\EnvSync.Application.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>envsync</AssemblyName>
+    <RootNamespace>EnvSync.Cli</RootNamespace>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>envsync</ToolCommandName>
+    <PackageId>EnvSync.Tool</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Cross-platform CLI that injects secrets from Azure Key Vault, AWS Secrets Manager and HashiCorp Vault into a process or shell session, without plain-text .env files.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EnvSync.Application\EnvSync.Application.csproj" />
+    <ProjectReference Include="..\EnvSync.Infrastructure\EnvSync.Infrastructure.csproj" />
+    <ProjectReference Include="..\EnvSync.Providers.Azure\EnvSync.Providers.Azure.csproj" />
+    <ProjectReference Include="..\EnvSync.Providers.Aws\EnvSync.Providers.Aws.csproj" />
+    <ProjectReference Include="..\EnvSync.Providers.Vault\EnvSync.Providers.Vault.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Condition="Exists('..\..\README.md')" />
+  </ItemGroup>
+
+</Project>

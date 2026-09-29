@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\EnvSync.Application\EnvSync.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Security.KeyVault.Secrets" />
+    <PackageReference Include="Azure.Identity" />
+  </ItemGroup>
+
+</Project>
