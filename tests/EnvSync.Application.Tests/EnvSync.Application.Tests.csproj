@@ -14,4 +14,8 @@
     <ProjectReference Include="..\EnvSync.TestSupport\EnvSync.TestSupport.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\Shared\AllocationProbe.cs" Link="Shared\AllocationProbe.cs" />
+  </ItemGroup>
+
 </Project>
