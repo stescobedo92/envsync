@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Collections.Immutable;
 using System.ComponentModel;
 using System.Diagnostics;
 using EnvSync.Application.Abstractions;
@@ -8,7 +10,10 @@ namespace EnvSync.Infrastructure.Processes;
 /// <summary>
 /// Starts the child with the secrets added to its own environment block only: nothing is written to disk and the
 /// parent's environment is never modified. The child inherits stdin, stdout and stderr, so it keeps its terminal and its colors.
-/// Arguments go through <see cref="ProcessStartInfo.ArgumentList"/>, so no shell ever re-parses them.
+/// Arguments go through <see cref="ProcessStartInfo.ArgumentList"/>, so for a real executable no shell re-parses them.
+/// <strong>Batch files are the exception</strong>: Windows runs a <c>.cmd</c> or <c>.bat</c> through cmd.exe, which re-parses the
+/// command line with its own rules (<c>&amp;</c> starts a command, <c>%VAR%</c> expands, a quote can end the quoting), and no
+/// escaping is correct for all of them. Arguments containing such characters are refused for those targets.
 /// </summary>
 public sealed class SystemProcessLauncher : IProcessLauncher
 {
@@ -17,6 +22,8 @@ public sealed class SystemProcessLauncher : IProcessLauncher
     // ENOENT on Unix and ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND on Windows.
     private const int FileNotFound = 2;
     private const int PathNotFound = 3;
+
+    private static readonly SearchValues<char> CmdMetacharacters = SearchValues.Create("\"%&|<>^!()\r\n\0");
 
     private readonly ExecutableResolver _resolver;
     private readonly TimeSpan _gracePeriod;
@@ -31,9 +38,21 @@ public sealed class SystemProcessLauncher : IProcessLauncher
 
     public async ValueTask<Result<int>> RunAsync(ProcessLaunchRequest request, CancellationToken cancellationToken)
     {
+        // Nothing has happened yet: a stop requested while secrets were being fetched must not start a child anyway.
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (_resolver.Resolve(request.Executable) is not { } executable)
         {
             return NotFound(request.Executable);
+        }
+
+        if (IsBatchFile(executable) && FindCmdMetacharacter(request.Arguments) is { } offending)
+        {
+            return Result<int>.Failure(new Error(
+                ErrorKind.ProcessLaunchFailed,
+                request.Executable,
+                $"Argument {offending} contains a character that cmd.exe would interpret (\" % & | < > ^ ! ( ) or a line break), and '{Path.GetFileName(executable)}' is a batch file, which cmd.exe re-parses. " +
+                "Remove the character, or run the program the batch file wraps directly."));
         }
 
         var startInfo = new ProcessStartInfo(executable) { UseShellExecute = false };
@@ -123,6 +142,24 @@ public sealed class SystemProcessLauncher : IProcessLauncher
 
             await process.WaitForExitAsync(CancellationToken.None);
         }
+    }
+
+    private static bool IsBatchFile(string path) =>
+        OperatingSystem.IsWindows()
+        && (path.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".bat", StringComparison.OrdinalIgnoreCase));
+
+    /// <returns>The 1-based position of the first argument cmd.exe would interpret, or <see langword="null"/>.</returns>
+    private static int? FindCmdMetacharacter(ImmutableArray<string> arguments)
+    {
+        for (var i = 0; i < arguments.Length; i++)
+        {
+            if (arguments[i].AsSpan().ContainsAny(CmdMetacharacters))
+            {
+                return i + 1;
+            }
+        }
+
+        return null;
     }
 
     private static Result<int> NotFound(string command) =>

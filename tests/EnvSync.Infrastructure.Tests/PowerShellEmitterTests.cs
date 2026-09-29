@@ -23,8 +23,7 @@ public sealed class PowerShellEmitterTests
     [InlineData("`n `t backtick", "$env:DB_PASSWORD = '`n `t backtick'\n")]
     [InlineData("say \"hi\"", "$env:DB_PASSWORD = 'say \"hi\"'\n")]
     [InlineData("back\\slash", "$env:DB_PASSWORD = 'back\\slash'\n")]
-    [InlineData("ünïcödé 日本語", "$env:DB_PASSWORD = 'ünïcödé 日本語'\n")]
-    public void TryWriteVariable_SingleQuotesTheValueSoNothingIsInterpreted(string value, string expected)
+    public void TryWriteVariable_SingleQuotesPrintableAsciiSoNothingIsInterpreted(string value, string expected)
     {
         var (accepted, output) = EmitterAssert.Emit(_emitter, "DB_PASSWORD", value);
 
@@ -43,18 +42,40 @@ public sealed class PowerShellEmitterTests
         Assert.Equal(expected, output);
     }
 
+    // PowerShell decodes a native command's stdout with the console code page (437, 850, 1252...), not UTF-8, so any byte above
+    // 0x7F can be silently changed on the way in, and under some code pages can even end a quoted string. The script is therefore
+    // pure ASCII: every other character is written as its UTF-16 code unit.
     [Theory]
-    [InlineData("‘", "$env:A = '‘‘'\n")]
-    [InlineData("’", "$env:A = '’’'\n")]
-    [InlineData("‚", "$env:A = '‚‚'\n")]
-    [InlineData("‛", "$env:A = '‛‛'\n")]
-    [InlineData("‘x’; calc; ‘", "$env:A = '‘‘x’’; calc; ‘‘'\n")]
-    public void TryWriteVariable_DoublesTheTypographicQuotesPowerShellTreatsAsSingleQuotes(string value, string expected)
+    [InlineData("é", "$env:A = '' + [char]233 + ''\n")]
+    [InlineData("café", "$env:A = 'caf' + [char]233 + ''\n")]
+    [InlineData("ünï", "$env:A = '' + [char]252 + 'n' + [char]239 + ''\n")]
+    [InlineData("日", "$env:A = '' + [char]26085 + ''\n")]
+    [InlineData("Ñ;calc;#", "$env:A = '' + [char]209 + ';calc;#'\n")]
+    [InlineData("‘", "$env:A = '' + [char]8216 + ''\n")]
+    [InlineData("’", "$env:A = '' + [char]8217 + ''\n")]
+    [InlineData("‚", "$env:A = '' + [char]8218 + ''\n")]
+    [InlineData("‛", "$env:A = '' + [char]8219 + ''\n")]
+    [InlineData("\U0001F600", "$env:A = '' + [char]55357 + '' + [char]56832 + ''\n")]
+    [InlineData("tab\there", "$env:A = 'tab' + [char]9 + 'here'\n")]
+    [InlineData("\u007f", "$env:A = '' + [char]127 + ''\n")]
+    [InlineData("\x0085\x2028\x2029", "$env:A = '' + [char]133 + '' + [char]8232 + '' + [char]8233 + ''\n")]
+    public void TryWriteVariable_WritesEveryNonPrintableAsciiCharacterAsItsCodeUnit(string value, string expected)
     {
         var (accepted, output) = EmitterAssert.Emit(_emitter, "A", value);
 
         Assert.True(accepted);
         Assert.Equal(expected, output);
+    }
+
+    [Fact]
+    public void TryWriteVariable_TheOutputIsAlwaysPureAsciiWhateverTheValue()
+    {
+        var everything = string.Concat(Enumerable.Range(1, 0x2FF).Select(i => (char)i)) + "\U0001F600 日本語 ‘’";
+
+        var (accepted, output) = EmitterAssert.Emit(_emitter, "A", everything);
+
+        Assert.True(accepted);
+        Assert.All(output, c => Assert.True(c <= '~' && (c >= ' ' || c == '\n'), $"U+{(int)c:X4} is not printable ASCII"));
     }
 
     [Theory]
@@ -96,7 +117,7 @@ public sealed class PowerShellEmitterTests
     {
         using var writer = new PooledCharBufferWriter(4096);
         var name = EmitterAssert.Name("DB_PASSWORD");
-        const string value = "it's a $ecret\nwith ‘quotes’";
+        const string value = "it's a $ecret\nwith ‘quotes’ and 日本語";
 
         var allocated = AllocationProbe.Measure(() => _emitter.TryWriteVariable(name, value, writer));
 

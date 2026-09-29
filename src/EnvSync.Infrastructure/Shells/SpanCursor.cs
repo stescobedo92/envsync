@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace EnvSync.Infrastructure.Shells;
 
 /// <summary>
@@ -18,6 +20,13 @@ internal ref struct SpanCursor
     public readonly int Length => _position;
 
     public void Append(char value) => _span[_position++] = value;
+
+    /// <summary>Appends the decimal code of a character, so a non-printable one can be written as text.</summary>
+    public void AppendCode(char value)
+    {
+        ((int)value).TryFormat(_span[_position..], out var written, default, CultureInfo.InvariantCulture);
+        _position += written;
+    }
 
     public void Append(ReadOnlySpan<char> text)
     {

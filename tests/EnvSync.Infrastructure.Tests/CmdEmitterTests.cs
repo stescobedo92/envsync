@@ -51,6 +51,32 @@ public sealed class CmdEmitterTests
         Assert.Empty(output);
     }
 
+    // cmd reads at most 8191 characters per line and treats the rest as a new command, so a hostile value that pads a line past the
+    // limit could smuggle its tail in as code. A statement that long is refused instead.
+    [Fact]
+    public void TryWriteVariable_TheLongestStatementCmdCanReadSafelyIsAcceptedAndOneMoreCharacterIsRefused()
+    {
+        // 'set "A=' + value + '"' + CRLF is 10 characters longer than the value; the cap is 8000.
+        var (acceptedAtLimit, atLimit) = EmitterAssert.Emit(_emitter, "A", new string('x', 7990));
+        var (acceptedOver, overLimit) = EmitterAssert.Emit(_emitter, "A", new string('x', 7991));
+
+        Assert.True(acceptedAtLimit);
+        Assert.Equal(8000, atLimit.Length);
+        Assert.False(acceptedOver);
+        Assert.Empty(overLimit);
+    }
+
+    [Fact]
+    public void TryWriteVariable_AValueThatPadsPastTheLineLimitToSmuggleACommand_IsRefused()
+    {
+        var hostile = new string('x', 8185) + "& echo SMUGGLED &";
+
+        var (accepted, output) = EmitterAssert.Emit(_emitter, "A", hostile);
+
+        Assert.False(accepted);
+        Assert.Empty(output);
+    }
+
     [Fact]
     public void WriteFailure_SetsTheErrorLevelWithoutClosingTheConsole()
     {

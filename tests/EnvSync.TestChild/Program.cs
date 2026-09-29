@@ -30,4 +30,13 @@ if (mode == "hang")
     Thread.Sleep(Timeout.Infinite);
 }
 
+// cat=<file>: write the file's bytes, untouched, to stdout. It lets a test push a script through a real native pipe.
+if (mode.StartsWith("cat=", StringComparison.Ordinal))
+{
+    using var stdout = Console.OpenStandardOutput();
+    stdout.Write(File.ReadAllBytes(mode["cat=".Length..]));
+    stdout.Flush();
+    return 0;
+}
+
 return int.Parse(mode["exit=".Length..], System.Globalization.CultureInfo.InvariantCulture);

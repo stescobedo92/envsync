@@ -138,6 +138,45 @@ internal static class ShellHarness
         return [.. values.Select(v => v ?? string.Empty)];
     }
 
+    /// <summary>
+    /// The path <c>envsync env | Invoke-Expression</c> really takes: the script's bytes come out of a native process's stdout, are
+    /// decoded by PowerShell with the console's own code page (left at its default), and only then evaluated line by line.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> RunPowerShellThroughANativePipeAsync(
+        string powershell,
+        string childExecutable,
+        string scriptFile,
+        string reportFile,
+        IReadOnlyList<string> variables,
+        string workingDirectory,
+        CancellationToken cancellationToken)
+    {
+        var quotedNames = string.Join(',', variables.Select(v => $"'{v}'"));
+
+        var harness = $$"""
+            $ErrorActionPreference = 'Stop'
+            & '{{childExecutable}}' '{{reportFile}}' 'cat={{scriptFile}}' | Invoke-Expression
+            $stdout = [Console]::OpenStandardOutput()
+            foreach ($name in @({{quotedNames}})) {
+              $value = [Environment]::GetEnvironmentVariable($name)
+              if ($null -eq $value) { $value = '' }
+              $bytes = [Text.Encoding]::UTF8.GetBytes($value + [string][char]0)
+              $stdout.Write($bytes, 0, $bytes.Length)
+            }
+            $stdout.Flush()
+            """;
+
+        var result = await RunAsync(
+            powershell,
+            ["-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(harness))],
+            rawArguments: null,
+            stdin: null,
+            workingDirectory,
+            cancellationToken);
+
+        return SplitOnNul(result);
+    }
+
     /// <summary>Runs a whole script with <c>set -e</c> semantics available to it, then reports how the shell ended.</summary>
     public static async Task<(int ExitCode, string Stdout)> RunBashScriptAsync(
         string bash, string script, string workingDirectory, CancellationToken cancellationToken)

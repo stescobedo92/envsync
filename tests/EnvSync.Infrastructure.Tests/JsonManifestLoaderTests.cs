@@ -140,6 +140,23 @@ public sealed class JsonManifestLoaderTests
     }
 
     [Fact]
+    public async Task Load_AnAbsurdlyLargeFile_IsRefusedInsteadOfBeingReadIntoMemory()
+    {
+        using var dir = new TempDirectory();
+        var path = dir.WriteFile("envsync.json", string.Empty);
+        await using (var stream = File.Create(path))
+        {
+            stream.SetLength(3 * 1024 * 1024);
+        }
+
+        var result = await Load(Loader(), null, dir.Path);
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal(ErrorKind.ManifestInvalid, error.Kind);
+        Assert.Contains("1 MiB", error.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Load_CancelledBeforeReading_Throws()
     {
         using var dir = new TempDirectory();

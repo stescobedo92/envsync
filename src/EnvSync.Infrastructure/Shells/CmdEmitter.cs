@@ -9,11 +9,16 @@ namespace EnvSync.Infrastructure.Shells;
 /// <c>set "NAME=value"</c> for cmd.exe. Inside the quotes <c>&amp; | &lt; &gt; ( )</c> stay literal, but cmd offers no escape
 /// that is correct in every context for the rest, so this emitter does not guess: it accepts only printable ASCII
 /// and refuses <c>% " ! ^</c> (variable expansion, quote termination, delayed expansion, escape). ASCII only, because the
-/// batch file is decoded with whatever OEM code page is active. A refused value is reported, never mangled.
+/// batch file is decoded with whatever OEM code page is active, and no statement longer than 8000 characters, because cmd splits a
+/// line at 8191. A refused value is reported, never mangled.
 /// </summary>
 public sealed class CmdEmitter : IShellEmitter
 {
     private const string SetKeyword = "set \"";
+
+    // cmd reads at most 8191 characters of a line and runs whatever follows as a new command, so a value padded past that point could
+    // smuggle a command in. The cap leaves a wide margin below the limit.
+    private const int MaxStatementLength = 8000;
 
     public ShellKind Shell => ShellKind.Cmd;
 
@@ -28,6 +33,10 @@ public sealed class CmdEmitter : IShellEmitter
         }
 
         var length = SetKeyword.Length + name.Value.Length + 1 + value.Length + 3;
+        if (length > MaxStatementLength)
+        {
+            return false;
+        }
 
         var cursor = new SpanCursor(output.GetSpan(length));
         cursor.Append(SetKeyword);

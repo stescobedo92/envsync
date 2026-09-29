@@ -6,6 +6,8 @@ namespace EnvSync.Infrastructure.Manifests;
 
 public sealed class JsonManifestLoader : IManifestLoader
 {
+    private const long MaxManifestBytes = 1024 * 1024;
+
     private readonly ProviderRegistry _registry;
 
     public JsonManifestLoader(ProviderRegistry registry)
@@ -37,6 +39,11 @@ public sealed class JsonManifestLoader : IManifestLoader
         string json;
         try
         {
+            if (new FileInfo(path).Length > MaxManifestBytes)
+            {
+                return Fail(path, "The manifest is larger than 1 MiB. It should only hold references, never data.");
+            }
+
             json = await File.ReadAllTextAsync(path, cancellationToken);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

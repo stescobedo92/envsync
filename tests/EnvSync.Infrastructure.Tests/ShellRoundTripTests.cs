@@ -107,6 +107,65 @@ public sealed class ShellRoundTripTests
         Assert.Empty(Directory.GetFileSystemEntries(workingDirectory));
     }
 
+    [Fact]
+    public async Task Cmd_AStatementAtTheLengthLimit_ReadsBackExactlyThroughARealBatchFile()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "cmd.exe exists only on Windows.");
+        // 'set "' is 5 characters, 'ENVSYNC_RT_0' 12, '=' 1 and the tail '"' + CRLF 3: 7979 characters of value make the line exactly 8000.
+        string[] longest = [new string('x', 7979)];
+        var (script, _) = Build(new CmdEmitter(), longest);
+        using var scriptDir = new TempDirectory();
+        using var cwd = new TempDirectory();
+
+        var actual = await ShellHarness.RunCmdAsync(script, Prefix, 1, scriptDir.Path, cwd.Path, TestContext.Current.CancellationToken);
+
+        AssertRoundTrip(longest, actual, cwd.Path);
+    }
+
+    // Values whose UTF-8 bytes PowerShell would mangle, or even execute, if it decoded them with a legacy console code page.
+    private static readonly string[] NonAscii =
+    [
+        "unicode é ñ 日本語 \U0001F600",
+        "‘curly’ “double” ‚low‛",
+        "Ñ;Write-Output PWNED_MARKER;#",
+        "xÑ'; New-Item HACKED; '",
+        "\x0085 \x2028 \x2029 line separators",
+        "café\nline two é",
+    ];
+
+    private static async Task AssertNativePipeRoundTripAsync(string powershell, CancellationToken cancellationToken)
+    {
+        var child = Path.Combine(AppContext.BaseDirectory, "EnvSync.TestChild" + (OperatingSystem.IsWindows() ? ".exe" : string.Empty));
+        var (script, names) = Build(new PowerShellEmitter(), NonAscii);
+        using var work = new TempDirectory();
+        using var cwd = new TempDirectory();
+        var scriptFile = work.WriteFile("script.ps1", string.Empty);
+        await File.WriteAllBytesAsync(scriptFile, new System.Text.UTF8Encoding(false).GetBytes(script), cancellationToken);
+
+        var actual = await ShellHarness.RunPowerShellThroughANativePipeAsync(
+            powershell, child, scriptFile, work.Combine("child-report.txt"), names, cwd.Path, cancellationToken);
+
+        AssertRoundTrip(NonAscii, actual, cwd.Path);
+    }
+
+    [Fact]
+    public async Task PowerShell7_ThroughARealNativePipe_ReadsBackNonAsciiValuesUnderTheDefaultConsoleEncoding()
+    {
+        var pwsh = ShellHarness.FindPwsh();
+        Assert.SkipUnless(pwsh is not null, "PowerShell 7 (pwsh) is not installed on this machine.");
+
+        await AssertNativePipeRoundTripAsync(pwsh, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task WindowsPowerShell51_ThroughARealNativePipe_ReadsBackNonAsciiValuesUnderTheDefaultConsoleEncoding()
+    {
+        var powershell = ShellHarness.FindWindowsPowerShell();
+        Assert.SkipUnless(powershell is not null, "Windows PowerShell 5.1 exists only on Windows.");
+
+        await AssertNativePipeRoundTripAsync(powershell, TestContext.Current.CancellationToken);
+    }
+
     private static string FailureScript(IShellEmitter emitter, int exitCode)
     {
         using var writer = new PooledCharBufferWriter(256);

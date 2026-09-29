@@ -270,6 +270,84 @@ public sealed class SystemProcessLauncherTests
         Assert.Equal(5, result.Value);
     }
 
+    private static SystemProcessLauncher LauncherOverShimsIn(TempDirectory dir) =>
+        new(new ExecutableResolver(dir.Path, [".COM", ".EXE", ".BAT", ".CMD"]), TimeSpan.FromSeconds(10));
+
+    [Fact]
+    public async Task Run_OnWindows_ACmdShimReceivesASafeArgumentVerbatim()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Batch files only exist on Windows.");
+        using var dir = new TempDirectory();
+        dir.WriteFile("echo-arg.cmd", "@echo off\r\n(echo %~1)>\"%~dp0arg.txt\"\r\n");
+
+        var result = await LauncherOverShimsIn(dir).RunAsync(Request("echo-arg", ["hello world"]), TestContext.Current.CancellationToken);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("hello world", (await File.ReadAllTextAsync(dir.Combine("arg.txt"), TestContext.Current.CancellationToken)).Trim());
+    }
+
+    // cmd.exe re-parses the command line of a batch file with its own rules, not the ones .NET quotes for: `&` starts a new
+    // command, `%VAR%` expands (even inside quotes, and the environment holds the secrets envsync just injected), and a quote can
+    // close the quoting. Such arguments are refused rather than escaped, because no escaping is correct for all of them.
+    [Theory]
+    [InlineData("a&b")]
+    [InlineData("a|b")]
+    [InlineData("a>b")]
+    [InlineData("a<b")]
+    [InlineData("a^b")]
+    [InlineData("a!b")]
+    [InlineData("(a)")]
+    [InlineData("a\"b")]
+    [InlineData("%PATH%")]
+    [InlineData("100%")]
+    [InlineData("x\" & echo INJECTED > injected.txt & \"")]
+    public async Task Run_OnWindows_ACmdShimWithAnArgumentCmdWouldInterpret_IsRefusedBeforeAnythingRuns(string argument)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Batch files only exist on Windows.");
+        using var dir = new TempDirectory();
+        dir.WriteFile("echo-arg.cmd", "@echo off\r\n(echo %~1)>\"%~dp0arg.txt\"\r\n");
+        dir.WriteFile("tool.bat", "@echo off\r\nexit /b 0\r\n");
+
+        var viaCmd = await LauncherOverShimsIn(dir).RunAsync(Request("echo-arg", [argument]), TestContext.Current.CancellationToken);
+        var viaBat = await LauncherOverShimsIn(dir).RunAsync(Request("tool.bat", [argument]), TestContext.Current.CancellationToken);
+
+        foreach (var result in new[] { viaCmd, viaBat })
+        {
+            var error = Assert.Single(result.Errors);
+            Assert.Equal(ErrorKind.ProcessLaunchFailed, error.Kind);
+            Assert.Contains("cmd.exe", error.Detail, StringComparison.Ordinal);
+        }
+
+        Assert.False(File.Exists(dir.Combine("arg.txt")));
+        Assert.False(File.Exists(dir.Combine("injected.txt")));
+    }
+
+    [Fact]
+    public async Task Run_AnExecutableIsNeverSubjectToTheBatchFileRule()
+    {
+        using var dir = new TempDirectory();
+
+        var result = await LauncherWith().RunAsync(
+            Request(Child, ChildArgs(dir.Combine("r.txt"), "exit=0", "a&b", "%PATH%", "x\" & y")),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.IsSuccess);
+    }
+
+    [Fact]
+    public async Task Run_AlreadyCancelled_ThrowsBeforeTheChildIsStarted()
+    {
+        using var dir = new TempDirectory();
+        var report = dir.Combine("report.txt");
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await LauncherWith().RunAsync(Request(Child, ChildArgs(report, "exit=0")), cts.Token));
+
+        Assert.False(File.Exists(report));
+    }
+
     [Fact]
     public async Task Run_OnWindows_AFileThatIsNotAnExecutable_ReportsALaunchFailure()
     {

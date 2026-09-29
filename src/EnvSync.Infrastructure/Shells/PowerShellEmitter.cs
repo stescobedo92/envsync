@@ -6,23 +6,28 @@ using EnvSync.Domain;
 namespace EnvSync.Infrastructure.Shells;
 
 /// <summary>
-/// <c>$env:NAME = 'value'</c> for Windows PowerShell 5.1 and PowerShell 7. Single-quoted strings interpret nothing, with two
-/// traps this emitter closes:
+/// <c>$env:NAME = 'value'</c> for Windows PowerShell 5.1 and PowerShell 7. The script is <strong>pure printable ASCII</strong>,
+/// for two reasons that both come from how <c>envsync env | Invoke-Expression</c> works:
 /// <list type="bullet">
-/// <item>PowerShell treats the typographic quotes U+2018, U+2019, U+201A and U+201B exactly like <c>'</c>, so each is doubled too.</item>
 /// <item>
-/// <c>envsync env | Invoke-Expression</c> evaluates its input <em>one line at a time</em>, so a raw line break inside a value
-/// would cut the statement in half. Line breaks are therefore written as <c>[char]10</c> / <c>[char]13</c> and every
-/// statement stays on a single line.
+/// PowerShell decodes a native command's stdout with the console's code page (437, 850, 1252...), not UTF-8. Any byte above
+/// 0x7F can therefore be silently changed on the way in, and under some code pages a byte pair can even turn into a quote
+/// character that ends the string literal. ASCII is the one thing every code page agrees on.
+/// </item>
+/// <item>
+/// <c>Invoke-Expression</c> evaluates its input <em>one line at a time</em>, so a raw line break inside a value would cut the
+/// statement in half. Every statement stays on a single line.
 /// </item>
 /// </list>
+/// Printable ASCII goes inside single quotes, where nothing is interpreted (only <c>'</c> is doubled). Every other character,
+/// including line breaks and each half of a surrogate pair, is written as <c>' + [char]N + '</c> with its UTF-16 code unit.
 /// </summary>
 public sealed class PowerShellEmitter : IShellEmitter
 {
     private const string Prefix = "$env:";
     private const string Assignment = " = '";
-    private const string LineFeed = "' + [char]10 + '";
-    private const string CarriageReturn = "' + [char]13 + '";
+    private const string EncodedStart = "' + [char]";
+    private const string EncodedEnd = " + '";
 
     public ShellKind Shell => ShellKind.PowerShell;
 
@@ -42,22 +47,20 @@ public sealed class PowerShellEmitter : IShellEmitter
 
         foreach (var c in value)
         {
-            if (IsSingleQuote(c))
+            if (c == '\'')
+            {
+                cursor.Append('\'');
+                cursor.Append('\'');
+            }
+            else if (IsPrintableAscii(c))
             {
                 cursor.Append(c);
-                cursor.Append(c);
-            }
-            else if (c == '\n')
-            {
-                cursor.Append(LineFeed);
-            }
-            else if (c == '\r')
-            {
-                cursor.Append(CarriageReturn);
             }
             else
             {
-                cursor.Append(c);
+                cursor.Append(EncodedStart);
+                cursor.AppendCode(c);
+                cursor.Append(EncodedEnd);
             }
         }
 
@@ -74,22 +77,26 @@ public sealed class PowerShellEmitter : IShellEmitter
 
     private static int ExpandedLength(ReadOnlySpan<char> value)
     {
-        var length = value.Length;
+        var length = 0;
 
         foreach (var c in value)
         {
-            if (IsSingleQuote(c))
-            {
-                length++;
-            }
-            else if (c is '\n' or '\r')
-            {
-                length += LineFeed.Length - 1;
-            }
+            length += c == '\'' ? 2
+                : IsPrintableAscii(c) ? 1
+                : EncodedStart.Length + DecimalDigits(c) + EncodedEnd.Length;
         }
 
         return length;
     }
 
-    private static bool IsSingleQuote(char c) => c is '\'' or '‘' or '’' or '‚' or '‛';
+    private static bool IsPrintableAscii(char c) => c is >= ' ' and <= '~';
+
+    private static int DecimalDigits(char c) => c switch
+    {
+        < (char)10 => 1,
+        < (char)100 => 2,
+        < (char)1000 => 3,
+        < (char)10000 => 4,
+        _ => 5,
+    };
 }
