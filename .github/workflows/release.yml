@@ -1,0 +1,185 @@
+name: release
+
+# Publishing a release is pushing a SemVer tag whose number equals <Version> in src/EnvSync.Cli/EnvSync.Cli.csproj:
+#
+#   git tag v1.2.3 && git push origin v1.2.3        (v1.2.3-rc.1 is published as a pre-release)
+#
+# Running it by hand (Actions > release > Run workflow) is a DRY RUN: it builds, tests and archives every target and keeps the
+# archives as workflow artifacts, but publishes nothing, because only a tag creates a release.
+on:
+  push:
+    tags: ['v[0-9]*.[0-9]*.[0-9]*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # First and cheap: a malformed or mismatched tag stops here, before any runner is spent building for six targets.
+  version:
+    name: verify the version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.verify.outputs.version }}
+      prerelease: ${{ steps.verify.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: verify
+        env:
+          # Through the environment, never spliced into the script: a tag name may contain shell metacharacters.
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: bash scripts/release/verify-version.sh "$TAG" src/EnvSync.Cli/EnvSync.Cli.csproj >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: version
+    uses: ./.github/workflows/test.yml
+
+  # One native binary per target. Native AOT cannot cross-compile between operating systems, so each target builds on its own kind of runner.
+  build:
+    name: build (${{ matrix.rid }})
+    needs: [version, test]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, rid: linux-x64 }
+          - { os: ubuntu-24.04-arm, rid: linux-arm64 }
+          - { os: macos-latest, rid: osx-arm64 }
+          - { os: macos-15-intel, rid: osx-x64 }
+          - { os: windows-latest, rid: win-x64 }
+          - { os: windows-11-arm, rid: win-arm64 }
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      NAME: envsync-${{ needs.version.outputs.version }}-${{ matrix.rid }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: ./.github/actions/publish-native
+        with:
+          rid: ${{ matrix.rid }}
+
+      # A folder inside the archive, so that extracting it does not scatter files over the current directory.
+      - name: Stage
+        shell: bash
+        run: |
+          exe=envsync
+          if [[ "$RUNNER_OS" == Windows ]]; then exe=envsync.exe; fi
+          mkdir -p "dist/$NAME"
+          cp "aot/$exe" README.md "dist/$NAME/"
+
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "dist/$env:NAME" -DestinationPath "dist/$env:NAME.zip"
+
+      # tar keeps the executable bit, which a .zip written from Windows would lose.
+      - name: Archive (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: tar -czf "dist/$NAME.tar.gz" -C dist "$NAME"
+
+      # What users download is the archive, so that is what gets unpacked and run: a missing file or a lost executable bit shows up here.
+      - name: Smoke test the archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Expand-Archive -Path "dist/$env:NAME.zip" -DestinationPath "$env:RUNNER_TEMP/smoke"
+          $exe = "$env:RUNNER_TEMP/smoke/$env:NAME/envsync.exe"
+          $reported = (& $exe --version) -join ''
+          if ($LASTEXITCODE -ne 0 -or -not $reported.StartsWith($env:VERSION)) { throw "envsync --version printed '$reported', expected it to start with $env:VERSION" }
+          & $exe --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "envsync --help exited with $LASTEXITCODE" }
+
+      - name: Smoke test the archive (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          smoke="$RUNNER_TEMP/smoke"
+          mkdir -p "$smoke"
+          tar -xzf "dist/$NAME.tar.gz" -C "$smoke"
+          reported="$("$smoke/$NAME/envsync" --version)"
+          [[ "$reported" == "$VERSION"* ]] || { echo "envsync --version printed '$reported', expected it to start with $VERSION" >&2; exit 1; }
+          "$smoke/$NAME/envsync" --help > /dev/null
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: envsync-${{ matrix.rid }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  # The same tool as a `dotnet tool` package: runs anywhere .NET 10 is installed, for people who prefer that to a native binary.
+  pack:
+    name: pack the dotnet tool
+    needs: [version, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - run: dotnet pack src/EnvSync.Cli -c Release -o dist
+
+      - name: The package carries the verified version
+        run: test -f "dist/EnvSync.Tool.$VERSION.nupkg" || { echo "expected dist/EnvSync.Tool.$VERSION.nupkg, found:" >&2; ls dist >&2; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: envsync-tool
+          path: dist/*.nupkg
+          if-no-files-found: error
+          retention-days: 14
+
+  # Only a tag publishes. It needs every target: a release that is missing an operating system would be a broken promise.
+  release:
+    name: publish the GitHub release
+    if: github.ref_type == 'tag'
+    needs: [version, build, pack]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: envsync-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
+          mv "$RUNNER_TEMP/SHA256SUMS" .
+          cat SHA256SUMS
+
+      - name: Create the release
+        shell: bash
+        run: |
+          flags=(--verify-tag --generate-notes --title "envsync $TAG")
+          if [[ "$PRERELEASE" == true ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" dist/* "${flags[@]}" --repo "$GITHUB_REPOSITORY"
