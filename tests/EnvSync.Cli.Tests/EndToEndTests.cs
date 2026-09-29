@@ -110,6 +110,64 @@ public sealed class EndToEndTests : IDisposable
         Assert.StartsWith("$env:DB_PASSWORD = ", result.Stdout, StringComparison.Ordinal);
     }
 
+    // The way to use `env` from cmd.exe without a file on disk: for /f runs each line the command prints, so the secrets go from
+    // envsync's stdout straight into the console's own environment.
+    [Fact]
+    public async Task Env_InCmd_TheForFIdiomSetsTheVariablesWithoutTouchingTheDisk()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "cmd.exe exists only on Windows.");
+        var manifest = WriteManifest();
+        Assert.SkipWhen(Envsync.Contains(' ', StringComparison.Ordinal) || manifest.Contains(' ', StringComparison.Ordinal), "The for /f idiom is exercised with paths that contain no spaces.");
+        var filesBefore = Directory.GetFiles(_work.Path).Length;
+
+        // envsync is on PATH, as installed: cmd strips only one pair of outer quotes, so the command inside must carry none.
+        var result = await RunCmdAsync(
+            $"for /f \"usebackq delims=\" %L in (`envsync env --manifest {manifest} --profile dev --shell cmd`) do %L & set DB_PASSWORD");
+
+        Assert.True(
+            result.Stdout.Contains("DB_PASSWORD=e2e p@ss 'quoted' $HOME", StringComparison.Ordinal),
+            $"exit={result.ExitCode}{Environment.NewLine}stdout: {result.Stdout}{Environment.NewLine}stderr: {result.Stderr}");
+        Assert.Equal(filesBefore, Directory.GetFiles(_work.Path).Length);
+    }
+
+    [Fact]
+    public async Task Env_InCmd_WhenSomethingIsMissing_TheForFIdiomLeavesTheErrorLevelAtTheExitCode()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "cmd.exe exists only on Windows.");
+        var manifest = WriteManifest(includeMissing: true);
+        Assert.SkipWhen(Envsync.Contains(' ', StringComparison.Ordinal) || manifest.Contains(' ', StringComparison.Ordinal), "The for /f idiom is exercised with paths that contain no spaces.");
+
+        var result = await RunCmdAsync(
+            $"for /f \"usebackq delims=\" %L in (`envsync env --manifest {manifest} --profile dev --shell cmd 2^>nul`) do %L & if errorlevel 11 echo FAILED_WITH_11");
+
+        Assert.True(
+            result.Stdout.Contains("FAILED_WITH_11", StringComparison.Ordinal),
+            $"exit={result.ExitCode}{Environment.NewLine}stdout: {result.Stdout}{Environment.NewLine}stderr: {result.Stderr}");
+        Assert.DoesNotContain("DB_PASSWORD", result.Stdout, StringComparison.Ordinal);
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunCmdAsync(string command)
+    {
+        var startInfo = new ProcessStartInfo("cmd.exe")
+        {
+            Arguments = $"/d /s /c \"{command}\"",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.Environment.Remove("ENVSYNC_PROFILE");
+        startInfo.Environment["VAULT_TOKEN"] = Token;
+        startInfo.Environment.Remove("VAULT_ADDR");
+        startInfo.Environment["PATH"] = Path.GetDirectoryName(Envsync) + Path.PathSeparator + startInfo.Environment["PATH"];
+
+        using var process = Process.Start(startInfo)!;
+        var stdout = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var stderr = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+        await process.WaitForExitAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
+        return (process.ExitCode, await stdout, await stderr);
+    }
+
     public void Dispose()
     {
         _stop.Cancel();

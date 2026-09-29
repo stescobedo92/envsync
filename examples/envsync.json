@@ -1,0 +1,36 @@
+{
+  // Este archivo SÍ se puede versionar: solo contiene referencias, nunca secretos.
+  "defaultProfile": "dev",
+  "profiles": {
+    "dev": {
+      "providers": {
+        "kv":    { "type": "azure-keyvault",  "uri": "https://mi-vault.vault.azure.net" },
+        "aws":   { "type": "aws-secrets",     "region": "us-east-1" },
+        "vault": { "type": "hashicorp-vault", "address": "https://vault.ejemplo.com:8200", "mount": "secret", "kv": 2 }
+      },
+      "variables": {
+        // Azure Key Vault: el nombre del secreto solo admite letras, dígitos y '-'.
+        "DB_PASSWORD": { "from": "kv", "ref": "db-password" },
+
+        // AWS Secrets Manager: 'nombre#campo' extrae una propiedad de un secreto JSON.
+        "API_KEY": { "from": "aws", "ref": "prod/api#key" },
+
+        // HashiCorp Vault (KV): la ruta es relativa al 'mount'; el '#campo' es obligatorio.
+        // Tu token solo se envía a la dirección de tu propio VAULT_ADDR (o de ENVSYNC_TRUSTED_HOSTS): la 'address' de arriba
+        // debe coincidir con la tuya, o quitarse para usar VAULT_ADDR.
+        "JWT_SECRET": { "from": "vault", "ref": "app#jwt" },
+
+        // Opcional: si no existe se omite con una advertencia, pero un fallo de credenciales sigue siendo un error.
+        "LOG_LEVEL": { "from": "kv", "ref": "log-level", "required": false }
+      }
+    },
+    "staging": {
+      "providers": {
+        "kv": { "type": "azure-keyvault", "uri": "https://mi-vault-staging.vault.azure.net" }
+      },
+      "variables": {
+        "DB_PASSWORD": { "from": "kv", "ref": "db-password" }
+      }
+    }
+  }
+}
