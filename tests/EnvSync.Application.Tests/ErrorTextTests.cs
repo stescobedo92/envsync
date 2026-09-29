@@ -35,6 +35,26 @@ public sealed class ErrorTextTests
     }
 
     [Fact]
+    public void Sanitize_ReplacesEveryCharacterThatCouldForgeOutput_AndLeavesTheRestAlone()
+    {
+        // ESC, line and paragraph separators, bidirectional overrides and zero-width joiners
+        var hostile = "a\x1b[2Kb\x2028c\x2029d\x202Ee\x2066f\x200Bg\nh\ri";
+
+        var clean = ErrorText.Sanitize(hostile);
+
+        Assert.Equal("a?[2Kb?c?d?e?f?g?h?i", clean);
+        Assert.Equal("plain text - ünïcödé 日本語", ErrorText.Sanitize("plain text - ünïcödé 日本語"));
+    }
+
+    [Fact]
+    public void Sanitize_NothingToChange_ReturnsTheSameInstance()
+    {
+        var text = "DB_PASSWORD";
+
+        Assert.Same(text, ErrorText.Sanitize(text));
+    }
+
+    [Fact]
     public void Summarize_ControlCharactersBecomeSpacesSoTheyCannotForgeTerminalOutput()
     {
         var summary = ErrorText.Summarize("before\u001b[2Kafter\u0007bell", 500);

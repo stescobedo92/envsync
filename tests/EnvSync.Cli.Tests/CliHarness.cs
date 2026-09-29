@@ -6,6 +6,39 @@ using EnvSync.TestSupport;
 
 namespace EnvSync.Cli.Tests;
 
+/// <summary>A stdout that fails on every write, like a pipe whose reader has gone away (<c>envsync env | head -c0</c>).</summary>
+internal sealed class ClosedPipeStream : Stream
+{
+    public override bool CanRead => false;
+
+    public override bool CanSeek => false;
+
+    public override bool CanWrite => true;
+
+    public override long Length => throw new NotSupportedException();
+
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override void Flush() => throw new IOException("The pipe is being closed.");
+
+    public override Task FlushAsync(CancellationToken cancellationToken) => throw new IOException("The pipe is being closed.");
+
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    public override void Write(byte[] buffer, int offset, int count) => throw new IOException("The pipe is being closed.");
+
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+        throw new IOException("The pipe is being closed.");
+}
+
 /// <summary>A launcher that blows up, to prove an unexpected crash is reported instead of escaping.</summary>
 internal sealed class CrashingLauncher : IProcessLauncher
 {
@@ -81,6 +114,9 @@ internal sealed class CliHarness : IDisposable
 
     public bool StdoutIsRedirected { get; set; } = true;
 
+    /// <summary>Replaces stdout with a stream of the test's choosing, for example one that fails like a closed pipe.</summary>
+    public Func<Stream>? StandardOutputFactory { get; set; }
+
     public string Directory => _directory.Path;
 
     public string Write(string relativePath, string content) => _directory.Write(relativePath, content);
@@ -100,7 +136,7 @@ internal sealed class CliHarness : IDisposable
 
         var environment = new CliEnvironment
         {
-            StandardOutput = stdout,
+            StandardOutput = StandardOutputFactory?.Invoke() ?? stdout,
             StandardError = stderr,
             IsOutputRedirected = StdoutIsRedirected,
             GetEnvironmentVariable = name => Environment.GetValueOrDefault(name),

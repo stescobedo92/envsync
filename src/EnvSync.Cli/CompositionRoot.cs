@@ -18,7 +18,8 @@ internal sealed record CliServices(
     IManifestLoader ManifestLoader,
     IQueryHandler<CheckRequirementsQuery, ResolutionResult> Check,
     IQueryHandler<ExportEnvironmentQuery, ExportResult> Export,
-    ICommandHandler<RunProcessCommand, RunProcessResult> Run);
+    ICommandHandler<RunProcessCommand, RunProcessResult> Run,
+    IReadOnlyList<IShellEmitter> ShellEmitters);
 
 /// <summary>Seams for tests: anything left null keeps its real implementation.</summary>
 internal sealed class CompositionOverrides
@@ -61,6 +62,7 @@ internal static class CompositionRoot
             new JsonManifestLoader(registry),
             new CheckRequirementsQueryHandler(resolver),
             new ExportEnvironmentQueryHandler(resolver, emitters),
-            new RunProcessCommandHandler(resolver, launcher));
+            new RunProcessCommandHandler(resolver, launcher),
+            emitters);
     }
 }

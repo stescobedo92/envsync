@@ -46,7 +46,8 @@ public sealed class ExportEnvironmentQueryHandler : IQueryHandler<ExportEnvironm
                 errors.Add(new Error(
                     ErrorKind.UnsupportedValueForShell,
                     outcome.Spec.Name.Value,
-                    $"The value cannot be written safely for {query.Shell}; use 'envsync run' instead."));
+                    $"The value cannot be written safely for {query.Shell} (the README lists what each shell accepts). " +
+                    "'envsync run' does not go through a shell and can carry it, unless it contains a NUL character, which no environment can hold."));
             }
         }
 

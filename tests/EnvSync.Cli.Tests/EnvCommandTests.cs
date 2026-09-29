@@ -121,8 +121,11 @@ public sealed class EnvCommandTests
         Assert.Contains("export DB_PASSWORD=", result.Stdout, StringComparison.Ordinal);
     }
 
+    // `eval "$(envsync env)"` and `envsync env | Invoke-Expression` succeed on EMPTY output, which would let a caller carry on
+    // half-configured. When the environment cannot be built, stdout carries one statement that makes the consumer fail with the same
+    // exit code, and nothing else: no partial script, never a secret.
     [Fact]
-    public async Task Env_WhenARequiredKeyIsMissing_WritesNothingToStdoutAndReports()
+    public async Task Env_WhenARequiredKeyIsMissing_PrintsOnlyAStatementThatFailsTheConsumerAndReports()
     {
         using var cli = new CliHarness();
         cli.Provider.Fails("api-key", ErrorKind.SecretNotFound, "no such secret");
@@ -130,9 +133,57 @@ public sealed class EnvCommandTests
         var result = await cli.RunAsync("env", "--shell", "bash");
 
         Assert.Equal(ExitCodes.MissingRequired, result.ExitCode);
-        Assert.Empty(result.StdoutBytes);
+        Assert.Equal("(exit 11)\n", result.Stdout);
+        Assert.DoesNotContain(CliHarness.DbSecret, result.Stdout, StringComparison.Ordinal);
         Assert.Contains("API_KEY", result.Stderr, StringComparison.Ordinal);
         Assert.Contains("MISSING", result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Env_PowerShell_WhenSomethingIsMissing_PrintsAThrowSoInvokeExpressionStops()
+    {
+        using var cli = new CliHarness();
+        cli.Provider.Fails("api-key", ErrorKind.SecretNotFound, "no such secret");
+
+        var result = await cli.RunAsync("env", "--shell", "pwsh");
+
+        Assert.Equal(ExitCodes.MissingRequired, result.ExitCode);
+        Assert.StartsWith("throw 'envsync:", result.Stdout, StringComparison.Ordinal);
+        Assert.Single(result.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    [Fact]
+    public async Task Env_WhenTheManifestIsInvalid_StillPrintsTheFailingStatement()
+    {
+        using var cli = new CliHarness("""{"profiles": {}}""");
+
+        var result = await cli.RunAsync("env", "--shell", "bash");
+
+        Assert.Equal(ExitCodes.ManifestInvalid, result.ExitCode);
+        Assert.Equal("(exit 10)\n", result.Stdout);
+    }
+
+    [Fact]
+    public async Task Env_WhenTheProfileDoesNotExist_StillPrintsTheFailingStatement()
+    {
+        using var cli = new CliHarness();
+
+        var result = await cli.RunAsync("env", "--shell", "bash", "--profile", "prod");
+
+        Assert.Equal(ExitCodes.ManifestInvalid, result.ExitCode);
+        Assert.Equal("(exit 10)\n", result.Stdout);
+    }
+
+    [Fact]
+    public async Task Env_WarnsThatASkippedOptionalVariableWasNotSetAndKeepsWhateverItAlreadyHas()
+    {
+        using var cli = new CliHarness();
+
+        var result = await cli.RunAsync("env", "--shell", "bash");
+
+        var warning = result.Stderr.Split('\n').Single(line => line.Contains("LOG_LEVEL", StringComparison.Ordinal) && line.Contains("warning", StringComparison.Ordinal));
+        Assert.Contains("not set by envsync", warning, StringComparison.Ordinal);
+        Assert.Contains("existing value", warning, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -144,10 +195,48 @@ public sealed class EnvCommandTests
         var result = await cli.RunAsync("env", "--shell", "cmd");
 
         Assert.Equal(ExitCodes.UnsupportedValue, result.ExitCode);
-        Assert.Empty(result.StdoutBytes);
+        Assert.Equal("cmd /c exit 14\r\n", result.Stdout);
+        Assert.DoesNotContain("100%-sure", result.Stdout, StringComparison.Ordinal);
         Assert.Contains("DB_PASSWORD", result.Stderr, StringComparison.Ordinal);
         Assert.Contains("envsync run", result.Stderr, StringComparison.Ordinal);
         Assert.DoesNotContain("100%-sure", result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Env_WhenStdoutIsAClosedPipe_ReportsItInsteadOfCrashing()
+    {
+        using var cli = new CliHarness { StandardOutputFactory = () => new ClosedPipeStream() };
+
+        var result = await cli.RunAsync("env", "--shell", "bash");
+
+        Assert.Equal(ExitCodes.InternalError, result.ExitCode);
+        Assert.Contains("IOException", result.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain(CliHarness.DbSecret, result.Stderr, StringComparison.Ordinal);
+    }
+
+    // A typo in an option must not be the one failure that `eval "$(envsync env ...)"` cannot see.
+    [Theory]
+    [InlineData("bash", "(exit 64)\n")]
+    [InlineData("cmd", "cmd /c exit 64\r\n")]
+    public async Task Env_ATypoInTheOptions_StillPrintsTheFailingStatementForTheNamedShell(string shell, string expected)
+    {
+        using var cli = new CliHarness();
+
+        var result = await cli.RunAsync("env", "--shell", shell, "--nonsense");
+
+        Assert.Equal(ExitCodes.UsageError, result.ExitCode);
+        Assert.Equal(expected, result.Stdout);
+    }
+
+    [Fact]
+    public async Task Env_ATypoInTheOptions_PrintsNothingToATerminal()
+    {
+        using var cli = new CliHarness { StdoutIsRedirected = false };
+
+        var result = await cli.RunAsync("env", "--shell", "bash", "--nonsense");
+
+        Assert.Equal(ExitCodes.UsageError, result.ExitCode);
+        Assert.Empty(result.StdoutBytes);
     }
 
     [Fact]

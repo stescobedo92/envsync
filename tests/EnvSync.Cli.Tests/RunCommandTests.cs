@@ -100,6 +100,38 @@ public sealed class RunCommandTests
         Assert.Equal(0, cli.Provider.CallCount);
     }
 
+    // Without --, System.CommandLine also reads -v, -p and -m anywhere after the program as envsync's own options, so the child
+    // would silently run with altered arguments.
+    [Theory]
+    [InlineData("run", "my-app")]
+    [InlineData("run", "my-app", "-v")]
+    [InlineData("run", "my-app", "-p", "dev")]
+    public async Task Run_WithoutTheDoubleDash_IsAUsageErrorBecauseTheChildsOptionsWouldBeSwallowed(params string[] args)
+    {
+        using var cli = new CliHarness();
+
+        var result = await cli.RunAsync(args);
+
+        Assert.Equal(ExitCodes.UsageError, result.ExitCode);
+        Assert.Contains("--", result.Stderr, StringComparison.Ordinal);
+        Assert.Equal(0, cli.Launcher.Calls);
+        Assert.Equal(0, cli.Provider.CallCount);
+    }
+
+    [Fact]
+    public async Task Run_TheWarningForASkippedVariableCarriesTheReasonAndSaysItWasUnset()
+    {
+        using var cli = new CliHarness();
+        cli.Provider.Fails("log-level", ErrorKind.SecretNotFound, "the vault has no such secret");
+
+        var result = await cli.RunAsync("run", "--", "my-app");
+
+        var warning = result.Stderr.Split('\n').Single(line => line.Contains("warning", StringComparison.Ordinal));
+        Assert.Contains("LOG_LEVEL", warning, StringComparison.Ordinal);
+        Assert.Contains("the vault has no such secret", warning, StringComparison.Ordinal);
+        Assert.Contains("unset", warning, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Run_EverythingAfterTheDoubleDashBelongsToTheChild()
     {

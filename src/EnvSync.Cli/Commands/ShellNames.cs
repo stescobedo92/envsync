@@ -37,5 +37,24 @@ internal static class ShellNames
         return false;
     }
 
+    /// <summary>
+    /// The shell named on a command line that did not even parse, found by looking for <c>--shell</c> / <c>-s</c> by hand, so a failing
+    /// statement can still be written in the dialect the caller is about to evaluate. False when a shell was named that is not
+    /// supported: its syntax is unknown, so nothing should be written for it.
+    /// </summary>
+    public static bool TryFromArguments(IReadOnlyList<string> args, out ShellKind shell)
+    {
+        for (var i = 0; i < args.Count - 1; i++)
+        {
+            if (args[i] is "--shell" or "-s")
+            {
+                return TryParse(args[i + 1], out shell);
+            }
+        }
+
+        shell = Default;
+        return true;
+    }
+
     private static bool Is(string text, string name) => string.Equals(text, name, StringComparison.OrdinalIgnoreCase);
 }

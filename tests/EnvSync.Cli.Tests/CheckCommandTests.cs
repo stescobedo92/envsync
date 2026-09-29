@@ -95,6 +95,71 @@ public sealed class CheckCommandTests
     }
 
     [Fact]
+    public async Task Check_Json_SaysWhetherAnythingWasActuallyVerified()
+    {
+        using var cli = new CliHarness();
+
+        var online = await cli.RunAsync("check", "--format", "json");
+        var offline = await cli.RunAsync("check", "--format", "json", "--offline");
+
+        using var onlineDocument = JsonDocument.Parse(online.Stdout);
+        using var offlineDocument = JsonDocument.Parse(offline.Stdout);
+        Assert.True(onlineDocument.RootElement.GetProperty("verified").GetBoolean());
+        Assert.False(offlineDocument.RootElement.GetProperty("verified").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Check_Json_UsesUnixLineEndingsOnEveryOperatingSystem()
+    {
+        using var cli = new CliHarness();
+
+        var result = await cli.RunAsync("check", "--format", "json");
+
+        Assert.DoesNotContain('\r', result.Stdout);
+        Assert.EndsWith("\n", result.Stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Check_WhenSomethingIsWrong_AlsoSaysSoOnStderrSoAScriptedRunIsNeverSilent()
+    {
+        using var cli = new CliHarness();
+        cli.Provider.Fails("db-password", ErrorKind.AuthenticationFailed, "token expired");
+
+        var result = await cli.RunAsync("check", "--format", "json");
+
+        Assert.Equal(ExitCodes.ProviderFailure, result.ExitCode);
+        Assert.Contains("problem(s)", result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Check_WhenAllIsWell_SaysNothingOnStderr()
+    {
+        using var cli = new CliHarness();
+
+        var result = await cli.RunAsync("check", "--profile", "dev");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Empty(result.Stderr);
+    }
+
+    // Manifest strings are repository content: a profile, alias or variable name can carry escape sequences or line breaks that
+    // would erase lines or forge status lines in a terminal or a CI log.
+    [Fact]
+    public async Task Check_NeverEmitsTerminalControlCharactersFromTheManifest()
+    {
+        // The JSON escape is produced at run time, so the manifest holds the text \u001B rather than a raw control character.
+        var control = JsonEncodedText.Encode("\x1b[31m\n::warning::forged").ToString();
+        using var cli = new CliHarness(
+            "{\"profiles\": {\"dev" + control + "\": {\"providers\": {\"k" + control + "v\": {\"type\": \"fake\"}}, " +
+            "\"variables\": {\"A\": {\"from\": \"k" + control + "v\", \"ref\": \"db-password\"}}}}}");
+
+        var result = await cli.RunAsync("check");
+
+        Assert.DoesNotContain('\x1b', result.Stdout + result.Stderr);
+        Assert.DoesNotContain("\n::warning::", result.Stdout + result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Check_Json_WhenAllIsWell_SaysOkAndExitsZero()
     {
         using var cli = new CliHarness();

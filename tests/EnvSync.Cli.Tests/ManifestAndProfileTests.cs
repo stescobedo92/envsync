@@ -94,6 +94,58 @@ public sealed class ManifestAndProfileTests
         Assert.Equal("export DB_PASSWORD='STAGING'\n", result.Stdout);
     }
 
+    // An empty value is not "unset": CI often expands STAGE="" into ENVSYNC_PROFILE, and silently falling back to a manifest whose
+    // defaultProfile is production would run the wrong environment.
+    [Theory]
+    [InlineData("--profile", "")]
+    [InlineData("--profile", "  ")]
+    [InlineData("--manifest", "")]
+    [InlineData("--manifest", " ")]
+    public async Task ABlankProfileOrManifestOption_IsAUsageErrorNotASilentFallback(string option, string value)
+    {
+        using var cli = new CliHarness();
+
+        var result = await cli.RunAsync("check", option, value);
+
+        Assert.Equal(ExitCodes.UsageError, result.ExitCode);
+        Assert.Contains(option, result.Stderr, StringComparison.Ordinal);
+        Assert.Equal(0, cli.Provider.CallCount);
+    }
+
+    [Fact]
+    public async Task ABlankEnvsyncProfileVariable_IsAUsageErrorNotASilentFallbackToTheDefault()
+    {
+        using var cli = new CliHarness();
+        cli.Environment["ENVSYNC_PROFILE"] = string.Empty;
+
+        var result = await cli.RunAsync("check");
+
+        Assert.Equal(ExitCodes.UsageError, result.ExitCode);
+        Assert.Contains("ENVSYNC_PROFILE", result.Stderr, StringComparison.Ordinal);
+        Assert.Equal(0, cli.Provider.CallCount);
+    }
+
+    [Fact]
+    public async Task AProfileChosenByDefault_IsAnnouncedSoADefaultCannotBeMistakenForAChoice()
+    {
+        using var cli = new CliHarness();
+
+        var result = await cli.RunAsync("check");
+
+        Assert.Contains("using profile 'dev'", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("defaultProfile", result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnExplicitlyChosenProfile_IsNotAnnouncedBecauseTheUserJustSaidIt()
+    {
+        using var cli = new CliHarness();
+
+        var result = await cli.RunAsync("check", "--profile", "dev");
+
+        Assert.DoesNotContain("using profile", result.Stderr, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task TheEnvsyncProfileVariable_SelectsTheProfile()
     {

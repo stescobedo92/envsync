@@ -6,7 +6,8 @@ namespace EnvSync.Cli.Output;
 
 /// <summary>
 /// Renders what happened to each variable. It is handed a <see cref="ResolutionResult"/> and can only show names, providers,
-/// statuses and reasons: values are never reachable from here, so a report cannot leak one.
+/// statuses and reasons: values are never reachable from here, so a report cannot leak one. Every string that came from a manifest
+/// or a provider goes through <see cref="ErrorWriter.Safe"/> first.
 /// </summary>
 internal static class ReportWriter
 {
@@ -17,7 +18,7 @@ internal static class ReportWriter
         var rows = new List<string[]>(result.Outcomes.Length) { Headers };
         foreach (var outcome in result.Outcomes)
         {
-            rows.Add([outcome.Spec.Name.Value, outcome.Spec.From, Label(outcome), Detail(outcome)]);
+            rows.Add([ErrorWriter.Safe(outcome.Spec.Name.Value), ErrorWriter.Safe(outcome.Spec.From), Label(outcome), Detail(outcome)]);
         }
 
         var widths = new int[Headers.Length - 1];
@@ -26,7 +27,7 @@ internal static class ReportWriter
             widths[column] = rows.Max(row => row[column].Length);
         }
 
-        writer.WriteLine($"Profile '{profileName}'");
+        writer.WriteLine($"Profile '{ErrorWriter.Safe(profileName)}'");
         foreach (var row in rows)
         {
             writer.WriteLine($"{row[0].PadRight(widths[0])}  {row[1].PadRight(widths[1])}  {row[2].PadRight(widths[2])}  {row[3]}".TrimEnd());
@@ -42,24 +43,40 @@ internal static class ReportWriter
         writer.WriteLine($"error: {result.Errors.Length} problem(s) found; {consequence}.");
     }
 
-    public static void WriteWarnings(TextWriter writer, ResolutionResult result)
+    /// <param name="inheritedValuesRemain">
+    /// True for <c>env</c>, which cannot unset anything in the caller's shell: an existing value stays. False for <c>run</c>, where the
+    /// child's environment is built by envsync and the variable is removed from it.
+    /// </param>
+    public static void WriteWarnings(TextWriter writer, ResolutionResult result, bool inheritedValuesRemain)
     {
         foreach (var outcome in result.Outcomes)
         {
-            if (outcome.Status == VariableStatus.Skipped)
+            if (outcome.Status != VariableStatus.Skipped)
             {
-                writer.WriteLine($"warning: optional variable {outcome.Spec.Name.Value} was not found in '{outcome.Spec.From}' and was left unset.");
+                continue;
             }
+
+            var name = ErrorWriter.Safe(outcome.Spec.Name.Value);
+            var provider = ErrorWriter.Safe(outcome.Spec.From);
+            var reason = ErrorWriter.Safe(outcome.Error.Detail);
+
+            writer.WriteLine(inheritedValuesRemain
+                ? $"warning: optional variable {name} was not found in '{provider}' and is not set by envsync; any existing value is left as it is ({reason})"
+                : $"warning: optional variable {name} was not found in '{provider}' and is left unset in the program's environment ({reason})");
         }
     }
 
-    public static void WriteJson(Stream output, string profileName, ResolutionResult result, int exitCode)
+    public static void WriteJson(Stream output, string profileName, ResolutionResult result, int exitCode, bool verified)
     {
-        using var json = new Utf8JsonWriter(output, new JsonWriterOptions { Indented = true });
+        // "\n" explicitly: the default is the operating system's line ending, and the same report must read the same everywhere.
+        using var json = new Utf8JsonWriter(output, new JsonWriterOptions { Indented = true, NewLine = "\n" });
 
         json.WriteStartObject();
         json.WriteString("profile", profileName);
         json.WriteBoolean("ok", result.IsSatisfied);
+
+        // With --offline nothing was fetched, so "ok" only means the configuration is valid, never that the keys exist.
+        json.WriteBoolean("verified", verified);
         json.WriteNumber("exitCode", exitCode);
         json.WriteStartArray("variables");
 
@@ -75,7 +92,7 @@ internal static class ReportWriter
             {
                 json.WriteStartObject("error");
                 json.WriteString("kind", outcome.Error.Kind.ToString());
-                json.WriteString("detail", ErrorWriter.OneLine(outcome.Error.Detail));
+                json.WriteString("detail", ErrorWriter.Safe(outcome.Error.Detail));
                 json.WriteEndObject();
             }
 
@@ -99,6 +116,7 @@ internal static class ReportWriter
             ErrorKind.AuthenticationFailed => "AUTH",
             ErrorKind.Timeout => "TIMEOUT",
             ErrorKind.ProviderMisconfigured or ErrorKind.ProviderUnknown or ErrorKind.ManifestInvalid or ErrorKind.FieldRequired => "CONFIG",
+            ErrorKind.Internal => "BUG",
             _ => "ERROR",
         },
     };
@@ -106,9 +124,9 @@ internal static class ReportWriter
     private static string Detail(VariableOutcome outcome) => outcome.Status switch
     {
         VariableStatus.Resolved => string.Empty,
-        VariableStatus.Skipped => "optional, not found: left unset",
+        VariableStatus.Skipped => "optional, left unset: " + ErrorWriter.Safe(outcome.Error.Detail),
         VariableStatus.Unverified => "not checked (--offline)",
-        _ => ErrorWriter.OneLine(outcome.Error.Detail),
+        _ => ErrorWriter.Safe(outcome.Error.Detail),
     };
 
     private static string Summary(ResolutionResult result)

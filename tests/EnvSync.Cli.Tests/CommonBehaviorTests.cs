@@ -77,6 +77,56 @@ public sealed class CommonBehaviorTests
         Assert.Equal(0, cli.Provider.CallCount);
     }
 
+    [Theory]
+    [InlineData("--timeout", "2147483647")]
+    [InlineData("--timeout", "86401")]
+    [InlineData("--concurrency", "257")]
+    [InlineData("--concurrency", "100000")]
+    public async Task AbsurdlyLargeNumbers_AreUsageErrorsNotCrashes(string option, string value)
+    {
+        using var cli = new CliHarness();
+
+        var result = await cli.RunAsync("check", option, value);
+
+        Assert.Equal(ExitCodes.UsageError, result.ExitCode);
+    }
+
+    [Theory]
+    [InlineData("--timeout", "86400")]
+    [InlineData("--concurrency", "256")]
+    public async Task TheLargestAcceptedNumbers_Work(string option, string value)
+    {
+        using var cli = new CliHarness();
+
+        var result = await cli.RunAsync("check", option, value);
+
+        Assert.Equal(0, result.ExitCode);
+    }
+
+    // `@file` would let a wrapper that omits `--` (or any argument that starts with @) inject options and words from a file.
+    [Fact]
+    public async Task AnAtSignArgument_IsNeverExpandedFromAResponseFile()
+    {
+        using var cli = new CliHarness();
+        var responseFile = cli.Write("opts.rsp", "--offline\n");
+
+        var result = await cli.RunAsync("check", "@" + responseFile);
+
+        Assert.Equal(ExitCodes.UsageError, result.ExitCode);
+        Assert.Equal(0, cli.Provider.CallCount);
+    }
+
+    [Fact]
+    public async Task AClosedStdout_DoesNotCrashTheProcessOrHideTheExitCode()
+    {
+        using var cli = new CliHarness { StandardOutputFactory = () => new ClosedPipeStream() };
+        cli.Provider.Fails("api-key", ErrorKind.SecretNotFound);
+
+        var result = await cli.RunAsync("check");
+
+        Assert.Equal(ExitCodes.MissingRequired, result.ExitCode);
+    }
+
     [Fact]
     public async Task ConcurrencyOption_IsHonoured()
     {

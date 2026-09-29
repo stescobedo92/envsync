@@ -18,7 +18,7 @@ internal sealed class CheckCommand
 
     private readonly Option<bool> _offline = new("--offline")
     {
-        Description = "Only validate the manifest and the providers' settings; make no request.",
+        Description = "Only validate the manifest and the providers' settings; make no request. Exit code 0 then means the configuration is valid, not that the keys exist.",
     };
 
     private readonly Option<string> _format = new("--format", "-f")
@@ -54,27 +54,36 @@ internal sealed class CheckCommand
 
     private async Task<int> ExecuteAsync(ParseResult parse, CancellationToken cancellationToken)
     {
-        var settings = _context.Read(parse);
+        if (!_context.TryRead(parse, out var settings))
+        {
+            return ExitCodes.UsageError;
+        }
+
         var (profile, exitCode) = await _context.LoadProfileAsync(settings, cancellationToken);
         if (profile is null)
         {
             return exitCode;
         }
 
-        var result = await _context.Services.Check.HandleAsync(
-            new CheckRequirementsQuery(profile, settings.Resolve, parse.GetValue(_offline)),
-            cancellationToken);
+        var offline = parse.GetValue(_offline);
+        var result = await _context.Services.Check.HandleAsync(new CheckRequirementsQuery(profile, settings.Resolve, offline), cancellationToken);
 
         exitCode = ExitCodes.For(result);
 
         if (string.Equals(parse.GetValue(_format), Json, StringComparison.OrdinalIgnoreCase))
         {
             await _context.StandardOutput.FlushAsync(cancellationToken);
-            ReportWriter.WriteJson(_context.Host.StandardOutput, profile.Name, result, exitCode);
+            ReportWriter.WriteJson(_context.Host.StandardOutput, profile.Name, result, exitCode, verified: !offline);
         }
         else
         {
             ReportWriter.WriteTable(_context.StandardOutput, profile.Name, result);
+        }
+
+        if (exitCode != ExitCodes.Success)
+        {
+            // stdout carries the report, and a script may well be discarding it: a failure must not be silent on stderr too.
+            _context.StandardError.WriteLine($"error: {result.Errors.Length} problem(s) found; see the report above (exit code {exitCode}).");
         }
 
         return exitCode;
