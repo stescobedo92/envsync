@@ -1,0 +1,34 @@
+name: Publish the native binary
+description: >-
+  Publishes envsync as a single Native AOT binary for one runtime identifier, then runs the end-to-end tests against that binary
+  (not against the framework-dependent build), so what gets shipped is what got tested. The .NET SDK must already be set up.
+
+inputs:
+  rid:
+    description: Runtime identifier to publish for, for example linux-x64, osx-arm64 or win-x64. Native AOT cannot cross-compile between operating systems, so it must match the runner.
+    required: true
+  output:
+    description: Directory, relative to the workspace, that receives the published binary.
+    required: false
+    default: aot
+
+runs:
+  using: composite
+  steps:
+    - name: Native AOT toolchain (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+    - name: Publish
+      shell: bash
+      env:
+        RID: ${{ inputs.rid }}
+        OUTPUT: ${{ inputs.output }}
+      run: dotnet publish src/EnvSync.Cli -c Release -r "$RID" -p:PublishAot=true -o "$OUTPUT"
+
+    - name: End-to-end tests against the native binary
+      shell: bash
+      env:
+        ENVSYNC_E2E_BINARY: ${{ github.workspace }}/${{ inputs.output }}/envsync${{ runner.os == 'Windows' && '.exe' || '' }}
+      run: dotnet test --project tests/EnvSync.Cli.Tests -c Release --filter-class "*EndToEndTests"

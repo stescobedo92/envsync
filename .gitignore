@@ -3,6 +3,8 @@
 [Oo]bj/
 artifacts/
 publish/
+aot/
+dist/
 *.nupkg
 *.snupkg
 

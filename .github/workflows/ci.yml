@@ -1,80 +1,60 @@
 name: ci
 
+# Branches and pull requests only: a version tag is handled by `release`, which runs the same tests before it publishes anything.
 on:
   push:
+    branches: ['**']
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  build-and-test:
-    name: ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # The tool must behave the same on the three operating systems it targets.
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Build
-        run: dotnet build envsync.slnx -c Release
-
-      # Do not add --nologo here: on the .NET 10 SDK it is forwarded to the xUnit v3 host, which rejects it,
-      # and the run reports "Zero tests ran".
-      - name: Test
-        run: dotnet test --solution envsync.slnx -c Release --no-build
+  test:
+    uses: ./.github/workflows/test.yml
 
   # The tool is meant to be publishable as a single native binary. This proves it on each operating system, and runs the same
-  # end-to-end scenarios against that binary instead of the framework-dependent build.
-  aot:
-    name: native AOT ${{ matrix.rid }}
-    needs: build-and-test
+  # end-to-end scenarios against that binary instead of the framework-dependent build. `release` does the same for every target.
+  native:
+    name: native AOT (${{ matrix.rid }})
+    needs: test
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, rid: linux-x64, ext: "" }
-          - { os: windows-latest, rid: win-x64, ext: ".exe" }
-          - { os: macos-latest, rid: osx-arm64, ext: "" }
+          - { os: ubuntu-latest, rid: linux-x64 }
+          - { os: windows-latest, rid: win-x64 }
+          - { os: macos-latest, rid: osx-arm64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
 
-      - name: Native AOT toolchain (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
-
-      - name: Publish native binary
-        run: dotnet publish src/EnvSync.Cli -c Release -r ${{ matrix.rid }} -p:PublishAot=true -o aot
-
-      - name: End-to-end tests against the native binary
-        shell: bash
-        env:
-          ENVSYNC_E2E_BINARY: ${{ github.workspace }}/aot/envsync${{ matrix.ext }}
-        run: dotnet test --project tests/EnvSync.Cli.Tests -c Release --filter-class "*EndToEndTests"
+      - uses: ./.github/actions/publish-native
+        with:
+          rid: ${{ matrix.rid }}
 
   pack:
     name: pack the dotnet tool
-    needs: build-and-test
+    needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
 
       - run: dotnet pack src/EnvSync.Cli -c Release -o artifacts
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: EnvSync.Tool
           path: artifacts/*.nupkg
+          if-no-files-found: error
+          retention-days: 14
