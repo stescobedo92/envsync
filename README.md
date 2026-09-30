@@ -17,12 +17,49 @@ manifest (`envsync.json`) with **references**, and the values travel from the se
 
 ## Installation
 
-Requires the **.NET 10** SDK or runtime.
+### Download a release (no .NET needed)
+
+Each [release](https://github.com/stescobedo92/envsync/releases) ships a self-contained native binary per platform:
+
+| System | Archive |
+|---|---|
+| Windows x64 | `envsync-<version>-win-x64.zip` |
+| Windows ARM64 | `envsync-<version>-win-arm64.zip` |
+| Linux x64 | `envsync-<version>-linux-x64.tar.gz` |
+| Linux ARM64 | `envsync-<version>-linux-arm64.tar.gz` |
+| macOS Apple silicon | `envsync-<version>-osx-arm64.tar.gz` |
+| macOS Intel | `envsync-<version>-osx-x64.tar.gz` |
+
+Verify the download against the `SHA256SUMS` file attached to the same release, then unpack it and put `envsync` on your `PATH`:
+
+```bash
+grep linux-x64 SHA256SUMS | sha256sum --check      # on macOS: shasum -a 256 --check
+tar -xzf envsync-<version>-linux-x64.tar.gz
+sudo install envsync-<version>-linux-x64/envsync /usr/local/bin/
+envsync --version
+```
+```powershell
+Expand-Archive envsync-<version>-win-x64.zip .
+.\envsync-<version>-win-x64\envsync.exe --version      # then add that folder to your PATH
+```
+
+The binaries are **not code-signed or notarized**. Windows SmartScreen may warn about them, and macOS may refuse a binary downloaded
+with a browser; `xattr -d com.apple.quarantine envsync` clears that flag if you trust the checksum.
+
+### As a .NET tool
+
+Requires the **.NET 10** SDK or runtime. Download `EnvSync.Tool.<version>.nupkg` from the release and, in the folder that holds it:
+
+```bash
+dotnet tool install --global --add-source . EnvSync.Tool
+envsync --version
+```
+
+### From source
 
 ```bash
 dotnet pack src/EnvSync.Cli -c Release -o artifacts
 dotnet tool install --global --add-source ./artifacts EnvSync.Tool
-envsync --version
 ```
 
 ## Manifest
@@ -224,11 +261,12 @@ Cli             System.CommandLine and the composition root (hand-written DI, no
   network calls nor when the final secret value is materialized as a `string`.
 - **Bounded concurrent resolution**: one provider per alias, a cap on simultaneous requests, a per-secret timeout and a
   preallocated array where each task writes its own slot (no locks, stable order). A factory or a `Dispose` that throws does not break the run.
-- **Native AOT, verified on Windows**: the trimming/AOT analyzers are active across `src/` with warnings as errors, the tool's own
-  code uses no reflection and no assembly scanning, and `dotnet publish src/EnvSync.Cli -r win-x64 -p:PublishAot=true` produces
-  a single 16.5 MB native binary **with no warnings at all** and without needing the .NET runtime. The end-to-end tests pass
-  against that binary (`ENVSYNC_E2E_BINARY=<path>`). It needs the operating system's C++ tools (Visual Studio on Windows, `clang` on Linux);
-  on Windows `vswhere` must be on the `PATH`. **Linux and macOS have not been tried here**: the CI's `aot` job does that.
+- **Native AOT, verified on all three operating systems**: the trimming/AOT analyzers are active across `src/` with warnings as errors,
+  the tool's own code uses no reflection and no assembly scanning, and `dotnet publish src/EnvSync.Cli -r win-x64 -p:PublishAot=true`
+  produces a single 16.5 MB native binary **with no warnings at all** and without needing the .NET runtime. The end-to-end tests pass
+  against that binary (`ENVSYNC_E2E_BINARY=<path>`), and the release workflow repeats that on a runner of each of the six targets.
+  Native AOT cannot cross-compile between operating systems, and it needs the operating system's C++ tools (Visual Studio on Windows,
+  `clang` on Linux); on Windows `vswhere` must be on the `PATH`.
 
 ## Development
 
@@ -244,5 +282,26 @@ dotnet test --solution envsync.slnx
 - Tests against real shells are **skipped**, not simulated, if the shell is not installed on the machine.
 - `tests/EnvSync.Cli.Tests/EndToEndTests.cs` runs the real binary against a fake Vault on loopback and a real child process, and includes
   cmd's `for /f` idiom against a real `cmd.exe`.
-- These tests have only been run on Windows. The matrix in `.github/workflows/ci.yml` is meant to run them on Linux and macOS,
-  and its `aot` job publishes the native binary on each OS and runs the end-to-end tests against it.
+- CI (`.github/workflows/ci.yml`) runs the whole suite on Ubuntu, Windows and macOS, and publishes the native binary on each of them to run
+  the end-to-end tests against it. The tests that can only make sense on Windows (`cmd.exe`, Windows PowerShell 5.1 and `.cmd` shims)
+  are skipped on Linux and macOS, where bash and PowerShell 7 are exercised for real instead.
+- Real signal delivery (SIGTERM, SIGHUP) is still only covered through the cancellation logic, not through a real signal.
+
+### Releasing
+
+A release is a SemVer tag whose number equals `<Version>` in `src/EnvSync.Cli/EnvSync.Cli.csproj`:
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3            # v1.2.3-rc.1 is published as a pre-release
+```
+
+`.github/workflows/release.yml` then verifies the tag (`scripts/release/verify-version.sh`: strict SemVer 2.0.0, no build metadata, equal
+to `<Version>`), runs the test suite on Linux, Windows and macOS, builds a Native AOT binary on a matching runner for each of the six
+targets in [Installation](#installation), unpacks and runs every archive, and only then creates the GitHub release with the archives,
+`SHA256SUMS` and the .NET tool package. If any target fails, nothing is published. Running the workflow by hand from the Actions tab
+is a **dry run**: it builds and archives everything and keeps the results as workflow artifacts, but publishes nothing.
+
+## License
+
+[MIT](LICENSE).
