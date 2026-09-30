@@ -10,6 +10,12 @@
     <Version>0.1.0</Version>
     <Description>Cross-platform CLI that injects secrets from Azure Key Vault, AWS Secrets Manager and HashiCorp Vault into a process or shell session, without plain-text .env files.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Authors>Sergio Triana Escobedo</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/stescobedo92/envsync</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/stescobedo92/envsync</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>secrets;env;dotenv;azure-key-vault;aws-secrets-manager;hashicorp-vault;cli</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
